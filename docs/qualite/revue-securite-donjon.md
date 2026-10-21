@@ -16,7 +16,9 @@
 | D8 | L'échéance d'une manche est appréciée par l'horloge du serveur | Commande d'échéance envoyée avant l'échéance | Une échéance envoyée avant la fin du compte à rebours laisse la manche inchangée. | conforme |
 | D9 | Une action destinée à une manche déjà résolue est refusée | Test « refuse un choix pour une manche déjà résolue » | Le test passe : le choix est refusé avec `ROUND_OVER`. | conforme |
 | D10 | Connaître l'adresse d'une expédition ne permet pas d'y agir sans en être membre | Action envoyée par un joueur qui n'est pas membre | Un non-membre reçoit 403 `NOT_A_MEMBER` ; il peut consulter la vue, ce qui est voulu (rejoindre par l'adresse, vue publique, UUID non devinable). | conforme |
+| D11 | Aucun joueur ne peut agir au nom d'un compagnon ni écouter le canal en son nom | Test « présente le compagnon comme prêt, et ne le compte pas parmi les membres » ; fonction `isMember` de `rules.ts` | Le test passe : un compagnon n'est pas membre, ses actions sont refusées (`NOT_A_MEMBER`) et le canal lui est fermé. | conforme |
+| D12 | L'intelligence artificielle ne transmet aux joueurs aucune information qu'ils n'auraient pas autrement | Lecture de `companion.ts` et `monster-strategies.ts` ; vue filtrée inchangée | Le compagnon décide sur le début de manche sans connaître les actions des joueurs, et les monstres, qui les connaissent, ne sont révélés qu'une fois la manche résolue, dans `RoundResolved`. | conforme |
 
 ## Synthèse
 
-Les 10 exigences sont conformes.
+Les 12 exigences sont conformes.
