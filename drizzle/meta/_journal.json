@@ -43,6 +43,13 @@
       "when": 1792575677446,
       "tag": "0005_meilleur_butin",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792576309489,
+      "tag": "0006_expeditions_ouvertes",
+      "breakpoints": true
     }
   ]
 }
