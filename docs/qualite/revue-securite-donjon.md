@@ -18,7 +18,9 @@
 | D10 | Connaître l'adresse d'une expédition ne permet pas d'y agir sans en être membre | Action envoyée par un joueur qui n'est pas membre | Un non-membre reçoit 403 `NOT_A_MEMBER` ; il peut consulter la vue, ce qui est voulu (rejoindre par l'adresse, vue publique, UUID non devinable). | conforme |
 | D11 | Aucun joueur ne peut agir au nom d'un compagnon ni écouter le canal en son nom | Test « présente le compagnon comme prêt, et ne le compte pas parmi les membres » ; fonction `isMember` de `rules.ts` | Le test passe : un compagnon n'est pas membre, ses actions sont refusées (`NOT_A_MEMBER`) et le canal lui est fermé. | conforme |
 | D12 | L'intelligence artificielle ne transmet aux joueurs aucune information qu'ils n'auraient pas autrement | Lecture de `companion.ts` et `monster-strategies.ts` ; vue filtrée inchangée | Le compagnon décide sur le début de manche sans connaître les actions des joueurs, et les monstres, qui les connaissent, ne sont révélés qu'une fois la manche résolue, dans `RoundResolved`. | conforme |
+| D13 | Le canal du classement ne transmet aucune donnée d'événement, en particulier la graine d'une expédition | Test « annonce sur son canal les événements du classement, sans leurs données » | Règle du canal discrète (`redact: true`) ; le test passe : la réponse ne contient pas `seed`. | conforme |
+| D14 | Les informations transmises par le canal du classement sont déjà accessibles à tout joueur connecté | Lecture de la fonction `present` de `stream-api.ts` ; réponse de l'API du classement | Restent position, type, version et flux : les identifiants de joueurs sont déjà publics via l'API du classement, et ceux d'expéditions ne permettent ni d'agir (D10) ni d'écouter (D3). | conforme |
 
 ## Synthèse
 
-Les 12 exigences sont conformes.
+Les 14 exigences sont conformes.
