@@ -16,6 +16,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "verify": "pnpm lint && pnpm typecheck && pnpm lint:archi && pnpm test",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx scripts/migrate.ts",
@@ -39,11 +40,12 @@
     "@types/pg": "8.23.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@vitest/coverage-v8": "5.0.4",
     "dependency-cruiser": "18.6.0",
     "drizzle-kit": "0.31.11",
     "tsx": "4.23.15",
     "typescript": "6.0.3",
     "vitest": "5.0.4"
   },
-  "packageManager": "pnpm@12.14.0"
+  "packageManager": "pnpm@12.15.0"
 }
