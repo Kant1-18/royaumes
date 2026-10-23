@@ -93,6 +93,8 @@ export function ForgeScreen() {
   }, [])
 
   // Une fabrication qui atteint son échéance est relue, pour mettre à jour l'inventaire.
+  // DETTE TECHNIQUE DT-012 (docs/qualite/dette-technique.md) : sans canal temps réel, un
+  // paiement en attente ou une action d'un autre onglet n'apparaît qu'au rechargement.
   const due = view?.orders.some(
     (order) => order.status === 'forging' && order.readyAt !== null && now >= order.readyAt,
   )

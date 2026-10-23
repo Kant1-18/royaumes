@@ -7,7 +7,10 @@ import { replay, type WorkshopEvent } from '../domain/workshop'
 export function createEventStoreWorkshopRepository(store: EventStore): WorkshopRepository {
   return {
     async load(playerId) {
+      // DETTE TECHNIQUE DT-011 (docs/qualite/dette-technique.md) : le flux est relu en entier,
+      // sans instantané, à chaque commande et à chaque consultation.
       const stored = await store.read(forgeStream(playerId))
+
       const events = stored.map((e) => ({ type: e.type, data: e.data }) as WorkshopEvent)
       return { state: replay(events), version: stored.at(-1)?.version ?? 0 }
     },
