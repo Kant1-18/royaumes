@@ -12,7 +12,7 @@ dans le même commit que la modification qu'ils décrivent.
 ```mermaid
 flowchart TB
   joueur["Joueur<br/>[Personne]<br/>Joue depuis un navigateur,<br/>sur ordinateur ou sur téléphone"]
-  royaumes["Royaumes<br/>[Système logiciel]<br/>Jeu web multijoueur : village, donjon,<br/>classement, marché et taverne"]
+  royaumes["Royaumes<br/>[Système logiciel]<br/>Jeu web multijoueur : village, forge, donjon,<br/>classement, marché et taverne"]
   joueur -->|"Gère son village, joue avec les autres joueurs,<br/>reçoit les changements en direct (HTTPS)"| royaumes
 ```
 
@@ -28,7 +28,7 @@ flowchart TB
   subgraph royaumes["Système Royaumes"]
     web["Interface web<br/>[Conteneur : React, dans le navigateur]<br/>Pages du jeu et page de connexion"]
     serveur["Application serveur<br/>[Conteneur : Next.js et Hono, fonctions Vercel, Francfort]<br/>Rendu des pages, API JSON,<br/>authentification, flux temps réel"]
-    base[("Base de données<br/>[Conteneur : PostgreSQL, Neon, Francfort]<br/>Schéma platform : journal, points de reprise,<br/>boîte d'envoi, registre des effacements<br/>Schéma identity : comptes et sessions<br/>Schémas ranking, dungeon et market :<br/>modèles de lecture<br/>Schéma tavern : messages et présence")]
+    base[("Base de données<br/>[Conteneur : PostgreSQL, Neon, Francfort]<br/>Schéma platform : journal, points de reprise,<br/>boîte d'envoi, registre des effacements<br/>Schéma identity : comptes et sessions<br/>Schémas ranking, dungeon, market et forge :<br/>modèles de lecture<br/>Schéma tavern : messages et présence")]
   end
   joueur -->|"Utilise"| web
   web -->|"Pages, appels de l'API avec le cookie de session<br/>(HTTPS, JSON)"| serveur
@@ -42,9 +42,9 @@ flowchart TB
 | Application serveur | Next.js, Hono, Better Auth, Drizzle | Contrôle d'accès, règles du jeu, enregistrement des événements, diffusion des flux |
 | Base de données | PostgreSQL (Neon en production, PGlite en local et en test) | Conservation du journal d'événements, des comptes et des sessions ; modèles de lecture des modules |
 
-Le journal d'événements est la seule source de vérité des modules Village, Donjon et Marché.
+Le journal d'événements est la seule source de vérité des modules Village, Donjon, Marché et Forge.
 La Taverne n'enregistre pas d'événements : ses tables sont sa propre source de vérité (ADR 0008).
-Les tables des schémas `ranking`, `dungeon` et `market` sont des modèles de lecture, dérivés du journal par des projections : elles peuvent
+Les tables des schémas `ranking`, `dungeon`, `market` et `forge` sont des modèles de lecture, dérivés du journal par des projections : elles peuvent
 être vidées puis reconstruites à tout moment, sans perte d'information.
 
 L'interface web ne communique jamais directement avec la base : toute lecture et toute
@@ -66,6 +66,7 @@ flowchart TB
     dungeon["dungeon<br/>Donjon : domaine et IA, service,<br/>dépôt fondé sur le journal, API, canal discret,<br/>projection des expéditions ouvertes"]
     ranking["ranking<br/>Classement : projection,<br/>lecture, API, canal global"]
     market["market<br/>Marché : orchestrateur de la saga,<br/>projection des offres, API, canal global"]
+    forge["forge<br/>Forge : domaine, orchestrateur du paiement,<br/>dépôt fondé sur le journal, API,<br/>projection de la capacité des ateliers"]
     tavern["tavern<br/>Taverne : messages et présence<br/>en tables, API, canal à source propre"]
   end
   subgraph platform["src/platform"]
@@ -83,13 +84,14 @@ flowchart TB
   route --> server
   pages --> server
   server --> createapi
-  createapi --> system & realm & dungeon & ranking & market & tavern & auth & http & realtime & projection & outbox & privacy & cron
+  createapi --> system & realm & dungeon & ranking & market & forge & tavern & auth & http & realtime & projection & outbox & privacy & cron
   realm --> store & realtime & http & outbox
   market --> store & projection & realtime & http & outbox
+  forge --> store & projection & http & outbox
   dungeon --> store & projection & realtime & http
   ranking --> projection & realtime & http
   tavern --> realtime & http & db
-  realm & dungeon & market & ranking & tavern --> privacy
+  realm & dungeon & market & forge & ranking & tavern --> privacy
   privacy --> store
   auth --> privacy
   realtime --> store & http
@@ -104,7 +106,7 @@ flowchart TB
 
 Une flèche signifie « dépend de ». Le diagramme ne montre que les dépendances principales :
 `server.ts` crée également lui-même la base, le journal et l'adaptateur d'authentification,
-qu'il transmet à `create-api.ts`. Les modules `dungeon` et `ranking` écrivent directement
+qu'il transmet à `create-api.ts`. Les modules `dungeon`, `ranking` et `forge` écrivent directement
 dans leurs propres tables, au sein de la transaction fournie par le moteur des projections.
 
 Le module `ranking` lit des événements du Village et du Donjon, mais n'importe aucun de leurs
@@ -116,6 +118,18 @@ des messages dans la boîte d'envoi, que le distributeur remet aux gestionnaires
 La seule dépendance directe porte sur les contrats du Village (`REALM_TOPICS`, `ResourceAmounts`),
 qui décrivent ces messages. Chaque transaction ne modifie que les données d'un seul module,
 et la boîte d'envoi (ADR 0007).
+
+Le module `forge` dépend du Village de deux manières, toujours par ses seuls contrats. Pour lire,
+il tient la capacité de chaque atelier par une projection des événements `BuildingUpgraded` du
+Village (ADR 0010). Pour écrire, il fait payer chaque commande par un message `realm.withdraw`,
+dont la réponse fait démarrer la fabrication ou échouer la commande (ADR 0012).
+
+La Forge est aussi une participante de la saga du Marché (ADR 0013) : elle retire et verse des
+objets à la demande d'un autre module (`forge.withdraw-items`, `forge.deposit-items`), et répond
+avec la même forme que le Village. Le Marché choisit le destinataire de chaque mouvement d'après
+les biens concernés : la Forge pour des objets, le Village pour des ressources. Il ne dépend que
+des contrats de la Forge (`FORGE_TOPICS`, `ItemAmounts`, `RECIPES`), et son écran lit l'inventaire
+par l'interface de la Forge (`readInventory`, dans `forge/ui.tsx`).
 
 Chaque module déclare ses données personnelles à la brique `privacy`, au moyen d'un fichier
 `personal-data.ts` : il les exporte, désigne les champs personnels de ses événements, et les
@@ -134,6 +148,53 @@ dependency-cruiser (`.dependency-cruiser.cjs`) à chaque exécution de `pnpm ver
 - aucune dépendance circulaire n'est admise.
 
 Seule la racine de composition connaît à la fois la plateforme et l'ensemble des modules.
+
+### Paiement d'une commande de la Forge
+
+```mermaid
+sequenceDiagram
+  actor J as Joueur
+  participant F as Forge
+  participant B as Boîte d'envoi
+  participant V as Village
+  J->>F: POST /api/forge/orders
+  F->>B: OrderPlaced + realm.withdraw (même transaction)
+  B->>V: realm.withdraw
+  V->>B: Prélèvement ou refus + forge.transfer-result
+  B->>F: forge.transfer-result
+  F->>F: ForgingStarted, ou OrderFailed
+  F-->>J: Vue de l'atelier
+```
+
+### Échange d'un objet au Marché
+
+```mermaid
+sequenceDiagram
+  actor A as Alice (vendeuse)
+  actor Bo as Bob (acheteur)
+  participant M as Marché
+  participant B as Boîte d'envoi
+  participant F as Forge
+  participant V as Village
+  A->>M: Publie « 1 hache contre 30 pierre »
+  M->>B: OfferPublished + forge.withdraw-items (séquestre)
+  B->>F: forge.withdraw-items
+  F->>B: ItemsWithdrawn + market.transfer-result
+  B->>M: market.transfer-result : OfferOpened
+  Bo->>M: Accepte l'offre
+  M->>B: OfferAccepted + realm.withdraw (paiement)
+  B->>V: realm.withdraw
+  V->>B: Prélèvement + market.transfer-result
+  B->>M: market.transfer-result : TradeCompleted
+  M->>B: realm.deposit (Alice) + forge.deposit-items (Bob)
+  B->>V: realm.deposit
+  B->>F: forge.deposit-items
+```
+
+Chaque flèche vers la boîte d'envoi est une seule transaction, qui enregistre l'événement et le
+message. Un refus de la Forge ou du Village fait rejeter l'offre, ou la rouvre après un paiement
+refusé ; un objet en séquestre est rendu par `forge.deposit-items` au retrait ou à l'échéance de
+l'offre.
 
 ## Niveau 4 - Code
 

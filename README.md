@@ -71,7 +71,8 @@ Un module n'est accessible depuis l'extérieur que par ses entrées publiques : 
 | `realm` | Village : fondation, production de ressources, amélioration des bâtiments | `/api/realm` |
 | `dungeon` | Donjon : expéditions de un à quatre héros, compagnons pilotés par l'ordinateur, deux niveaux de difficulté, combats en manches simultanées | `/api/dungeon` |
 | `ranking` | Classement des joueurs, construit à partir des événements du Village et du Donjon | `/api/ranking` |
-| `market` | Marché : échanges de ressources entre joueurs, par une saga orchestrée | `/api/market` |
+| `market` | Marché : échanges de ressources et d'objets forgés entre joueurs, par une saga orchestrée | `/api/market` |
+| `forge` | Forge : fabrication d'objets payés par le Village, dans la limite du niveau de la forge du village ; inventaire d'objets échangeables au Marché | `/api/forge` |
 | `tavern` | Taverne : salon de discussion commun et présence des joueurs, sans Event Sourcing | `/api/tavern` |
 
 ## Temps réel
@@ -93,18 +94,34 @@ Les canaux du Donjon, du Classement et du Marché sont discrets : ils ne transme
 le type et la version des événements, et chaque navigateur relit sa propre vue, filtrée
 par le serveur.
 
+La Forge n'a pas encore de canal : son écran n'est mis à jour qu'à chaque action du joueur, et
+à l'échéance d'une fabrication (DT-012).
+
 Un flux se ferme de lui-même au bout de 240 secondes, et le navigateur s'y reconnecte
 sans perte d'événement. En développement, la variable `STREAM_MAX_SECONDS` permet de
 raccourcir cette durée pour observer la reconnexion.
 
 ## Échanges entre modules
 
-Une opération qui modifie les données de plusieurs modules, comme un échange du Marché, est
-une saga (ADR 0007) : chaque étape est une transaction locale à un module, et les modules
-communiquent par des messages enregistrés dans la boîte d'envoi (`platform.outbox`), dans la
-même transaction que leurs événements. Les messages sont distribués après chaque commande et
-chaque consultation du Marché, et chaque jour par la tâche planifiée `/api/cron/daily`. Leur livraison
-est garantie au moins une fois : les gestionnaires de messages sont idempotents.
+Une opération qui modifie les données de plusieurs modules, comme un échange du Marché ou le
+paiement d'une commande de la Forge, est une saga (ADR 0007, 0012 et 0013) : chaque étape est une
+transaction locale à un module, et les modules communiquent par des messages enregistrés dans la
+boîte d'envoi (`platform.outbox`), dans la même transaction que leurs événements. Les messages sont
+distribués après chaque commande et chaque consultation du Marché et de la Forge, et chaque jour
+par la tâche planifiée `/api/cron/daily`. Leur livraison est garantie au moins une fois : les
+gestionnaires de messages sont idempotents.
+
+| Sujet | Destinataire | Rôle |
+| --- | --- | --- |
+| `realm.withdraw` / `realm.deposit` | Village | Prélever ou verser des ressources |
+| `forge.withdraw-items` / `forge.deposit-items` | Forge | Retirer ou verser des objets |
+| `market.transfer-result` | Marché | Réponse du Village ou de la Forge à un mouvement de l'échange |
+| `market.expire` | Marché | Rappel différé d'une offre, à son échéance |
+| `forge.transfer-result` | Forge | Réponse du Village au paiement d'une commande |
+
+Le Village et la Forge répondent de la même façon (identifiant du mouvement, issue, quantités
+manquantes) : le Marché adresse chaque mouvement à l'un ou à l'autre selon les biens concernés,
+sans que sa saga change.
 
 ## Données personnelles
 
@@ -116,6 +133,11 @@ page « Mes données » :
 - supprimer son compte (`DELETE /api/account`) : ses données sont supprimées des tables de
   tous les modules, et son nom est remplacé par une mention neutre dans le journal
   d'événements (ADR 0008). Chaque effacement est consigné dans `platform.erasures`.
+
+La Forge n'a pas de table personnelle à vider : ses commandes et ses mouvements d'objets sont
+dans le journal, sans nom ni texte libre. Sa table `forge.workshops`, qui associe un joueur au
+niveau de sa forge, est un modèle de lecture : après l'effacement, elle ne garde que
+l'identifiant pseudonymisé, comme le journal.
 
 Les messages de la Taverne sont conservés trente jours, et la présence d'un joueur deux
 minutes après son dernier signal. Ces durées sont appliquées à chaque lecture, et chaque jour
@@ -183,6 +205,11 @@ d'une projection a lieu pendant une consultation : sa durée croît avec la tail
 Une offre échue n'est plus proposée ni acceptée, mais ses ressources ne sont restituées au
 vendeur qu'à la consultation suivante du Marché, ou au plus tard lors de la tâche planifiée
 quotidienne.
+
+Une fabrication payée ne peut pas être annulée (DT-008), et une commande dont le message de
+paiement est abandonné occupe une place de l'atelier jusqu'à sa relance (DT-009). Une offre
+du Marché porte sur un seul type de bien de chaque côté : des ressources ou des objets, jamais
+les deux (ADR 0013).
 
 L'effacement d'un compte parcourt tout le journal d'événements : sa durée croît avec la taille
 du journal. L'identifiant d'un joueur effacé reste dans le journal, sous une forme
