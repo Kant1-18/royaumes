@@ -30,6 +30,11 @@ export const theme: Record<string, Look> = {
   ranking: { glyph: '🏆', label: 'Classement' },
   market: { glyph: '⚖️', label: 'Marché' },
   tavern: { glyph: '🍺', label: 'Taverne' },
+  axe: { glyph: '🪓', label: 'Hache' },
+  pickaxe: { glyph: '🛠️', label: 'Pioche' },
+  shield: { glyph: '🛡️', label: 'Bouclier' },
+  sword: { glyph: '🗡️', label: 'Épée' },
+  crown: { glyph: '👑', label: 'Couronne' },
 }
 
 /** Apparence d'une entité ; une apparence neutre si l'entité n'est pas décrite. */
