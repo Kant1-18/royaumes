@@ -6,7 +6,9 @@ import {
   decide,
   evolve,
   initialState,
+  PAYMENT_TIMEOUT_MS,
   parseTransferId,
+  refundOf,
   type WorkshopCommand,
   type WorkshopState,
 } from './workshop'
@@ -156,6 +158,84 @@ describe('Forge - idempotence', () => {
       step: 'pay',
     })
     expect(parseTransferId('o1:reserve')).toBeNull()
+  })
+})
+
+describe('Forge - annulation', () => {
+  const cancel = (orderId: string): WorkshopCommand => ({ type: 'CancelOrder', orderId })
+
+  it('annule une fabrication en cours, et restitue au village la moitié de son coût', () => {
+    const { state, events, requests } = play(forging, cancel('o1'), T0 + minutes(1))
+    expect(events).toEqual([
+      {
+        type: 'OrderCancelled',
+        data: { orderId: 'o1', refund: { wood: 30, stone: 10 }, at: T0 + minutes(1) },
+      },
+    ])
+    expect(requests).toEqual([
+      {
+        kind: 'deposit',
+        transferId: 'forge:alice:o1:refund',
+        playerId: 'alice',
+        resources: { wood: 30, stone: 10 },
+      },
+    ])
+
+    // La place est libérée, et l'objet ne sera jamais forgé.
+    const view = toView(state, 1, T0 + minutes(5))
+    expect(view.busy).toBe(0)
+    expect(view.orders[0].status).toBe('cancelled')
+    expect(view.inventory.axe).toBe(0)
+  })
+
+  it("arrondit chaque part à l'entier inférieur, et ne restitue pas une part nulle", () => {
+    expect(refundOf({ wood: 61, stone: 1, gold: 20 })).toEqual({ wood: 30, gold: 10 })
+  })
+
+  it("refuse d'annuler une commande inconnue, en attente de paiement, forgée ou déjà annulée", () => {
+    expect(decide(forging, cancel('inconnue'), T0)).toEqual({
+      ok: false,
+      error: { code: 'ORDER_NOT_FOUND' },
+    })
+    const notCancellable = { ok: false, error: { code: 'NOT_CANCELLABLE' } }
+    expect(decide(paying, cancel('o1'), T0)).toEqual(notCancellable)
+    expect(decide(forging, cancel('o1'), T0 + minutes(2))).toEqual(notCancellable)
+    const cancelled = play(forging, cancel('o1')).state
+    expect(decide(cancelled, cancel('o1'), T0)).toEqual(notCancellable)
+  })
+})
+
+describe('Forge - délai de paiement', () => {
+  const late = T0 + PAYMENT_TIMEOUT_MS
+
+  it('libère la place et présente comme expirée une commande payée sans réponse dans le délai', () => {
+    expect(toView(paying, 1, late - 1)).toMatchObject({ busy: 1, orders: [{ status: 'paying' }] })
+    expect(toView(paying, 1, late)).toMatchObject({ busy: 0, orders: [{ status: 'expired' }] })
+    expect(decide(paying, order('o2'), late).ok).toBe(true)
+  })
+
+  it('restitue la totalité du coût si le paiement arrive après le délai', () => {
+    const { state, events, requests } = play(paying, paid('o1'), late)
+    expect(events).toEqual([
+      { type: 'OrderExpired', data: { orderId: 'o1', refund: { wood: 60, stone: 20 }, at: late } },
+    ])
+    expect(requests).toEqual([
+      {
+        kind: 'deposit',
+        transferId: 'forge:alice:o1:refund',
+        playerId: 'alice',
+        resources: { wood: 60, stone: 20 },
+      },
+    ])
+    expect(toView(state, 1, late).orders[0]).toMatchObject({ status: 'expired', readyAt: null })
+    // Une réponse reçue ensuite en double est sans effet.
+    expect(decide(state, paid('o1'), late)).toEqual({ ok: true, events: [] })
+  })
+
+  it('fait échouer la commande dont le paiement est refusé après le délai, sans rien restituer', () => {
+    const { state, requests } = play(paying, refused('o1', { wood: 5 }), late)
+    expect(state.orders.o1.status).toBe('failed')
+    expect(requests).toEqual([])
   })
 })
 

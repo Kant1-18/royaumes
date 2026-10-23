@@ -9,7 +9,9 @@ import { transferIdOf, type WorkshopEvent, type WorkshopState } from './workshop
 /** Demande produite par une étape de la saga. */
 export type SagaRequest =
   /** Prélever des ressources : le Village répond, et la réponse fait progresser la saga. */
-  { kind: 'withdraw'; transferId: string; playerId: string; resources: Amounts }
+  | { kind: 'withdraw'; transferId: string; playerId: string; resources: Amounts }
+  /** Verser des ressources : le versement ne peut pas échouer, aucune réponse n'est attendue. */
+  | { kind: 'deposit'; transferId: string; playerId: string; resources: Amounts }
 
 /**
  * Demandes déclenchées par un événement. L'état reçu est celui qui suit l'application
@@ -37,6 +39,22 @@ export function requestsFor(state: WorkshopState, event: WorkshopEvent): SagaReq
     // Refus du paiement : rien n'a été prélevé, rien n'est à compenser.
     case 'OrderFailed':
       return []
+
+    // Compensation : restitution au village d'une part du coût de la fabrication annulée,
+    // ou de la totalité du coût d'une commande payée après son délai.
+    case 'OrderCancelled':
+    case 'OrderExpired': {
+      const { orderId, refund } = event.data
+      if (Object.keys(refund).length === 0) return []
+      return [
+        {
+          kind: 'deposit',
+          transferId: transferIdOf(playerId, orderId, 'refund'),
+          playerId,
+          resources: refund,
+        },
+      ]
+    }
 
     // Mouvements d'objets demandés par un autre module : la réponse est l'affaire du service.
     case 'ItemsWithdrawn':

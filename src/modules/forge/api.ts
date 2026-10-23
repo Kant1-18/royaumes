@@ -5,11 +5,13 @@ import type { ForgeService } from './application/forge-service'
 import { PlaceOrderInput, RECIPE_CATALOG, type WorkshopError } from './contracts'
 
 /** Code HTTP associé à chaque erreur métier. */
-const STATUS: Record<WorkshopError['code'], 400 | 409> = {
+const STATUS: Record<WorkshopError['code'], 400 | 404 | 409> = {
   UNKNOWN_RECIPE: 400,
   ORDER_EXISTS: 409,
   FORGE_NOT_BUILT: 409,
   CAPACITY_REACHED: 409,
+  ORDER_NOT_FOUND: 404,
+  NOT_CANCELLABLE: 409,
 }
 
 /**
@@ -31,6 +33,14 @@ export function createForgeApi(service: ForgeService) {
         const result = await service.placeOrder(c.var.userId, c.req.valid('json').recipe)
         return result.ok
           ? c.json({ orderId: result.orderId, view: result.view }, 201)
+          : c.json({ error: result.error }, STATUS[result.error.code])
+      })
+
+      // Annulation d'une fabrication en cours : une part du coût est restituée au village.
+      .post('/orders/:orderId/cancel', async (c) => {
+        const result = await service.cancelOrder(c.var.userId, c.req.param('orderId'))
+        return result.ok
+          ? c.json({ orderId: result.orderId, view: result.view })
           : c.json({ error: result.error }, STATUS[result.error.code])
       })
   )

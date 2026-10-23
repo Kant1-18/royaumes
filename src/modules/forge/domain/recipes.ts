@@ -22,6 +22,9 @@ export const RECIPE_CATALOG: Record<Recipe, { cost: Amounts; durationMs: number 
   crown: { cost: { stone: 50, gold: 100 }, durationMs: minutes(10) },
 }
 
+/** Part du coût restituée au village à l'annulation d'une fabrication. */
+export const REFUND_SHARE = 0.5
+
 /** Vrai si la valeur désigne un objet du catalogue. */
 export const isRecipe = (value: string): value is Recipe =>
   (RECIPES as readonly string[]).includes(value)

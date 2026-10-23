@@ -116,6 +116,34 @@ describe('API du module Forge', () => {
     expect(await stockOf(api)).toEqual({ wood: 270, stone: 40, gold: 0 })
   })
 
+  it('annule une fabrication en cours, et restitue au village la moitié de son coût', async () => {
+    const api = await forgeBuilt()
+    const { orderId } = (await (await order(api, 'axe')).json()) as { orderId: string }
+    expect(await stockOf(api)).toEqual({ wood: 270, stone: 40, gold: 0 })
+
+    const res = await api.post(`/api/forge/orders/${orderId}/cancel`, {})
+    expect(res.status).toBe(200)
+    const { view } = (await res.json()) as { view: WorkshopView }
+    expect(view).toMatchObject({ busy: 0, orders: [{ status: 'cancelled' }] })
+    // 60 bois et 20 pierres prélevés, 30 bois et 10 pierres restitués.
+    expect(await stockOf(api)).toEqual({ wood: 300, stone: 50, gold: 0 })
+
+    // Une seconde annulation est refusée, et ne restitue rien.
+    const again = await api.post(`/api/forge/orders/${orderId}/cancel`, {})
+    expect(again.status).toBe(409)
+    expect((await again.json()).error.code).toBe('NOT_CANCELLABLE')
+    expect(await stockOf(api)).toEqual({ wood: 300, stone: 50, gold: 0 })
+  })
+
+  it("refuse d'annuler la commande d'un autre joueur, ou une commande inconnue (404)", async () => {
+    const api = await forgeBuilt()
+    const { orderId } = (await (await order(api, 'axe')).json()) as { orderId: string }
+
+    expect((await api.post(`/api/forge/orders/${orderId}/cancel`, {}, 'bob')).status).toBe(404)
+    expect((await api.post('/api/forge/orders/inconnue/cancel', {})).status).toBe(404)
+    expect((await api.post(`/api/forge/orders/${orderId}/cancel`, {}, null)).status).toBe(401)
+  })
+
   it("inclut les commandes de l'atelier dans l'export des données du joueur", async () => {
     const api = await forgeBuilt()
     await order(api, 'axe')

@@ -22,6 +22,8 @@ let service: ForgeService
 let handlers: Record<string, MessageHandler>
 let dispatch: () => Promise<unknown>
 let replies: Record<string, unknown>[]
+// Vrai si le Village simulé prélève sans répondre : sa réponse est alors perdue.
+let silent: boolean
 
 beforeEach(async () => {
   now = T0
@@ -29,6 +31,7 @@ beforeEach(async () => {
   stock = { wood: 100, stone: 100, gold: 0 }
   withdrawals = []
   replies = []
+  silent = false
 
   const db = await createTestDatabase()
   repo = createEventStoreWorkshopRepository(createEventStore(db))
@@ -58,6 +61,7 @@ beforeEach(async () => {
         stock[resource] -= amount
       }
     }
+    if (silent) return
     const topic = request.replyTo ?? ''
     await handlers[topic]({
       ...message,
@@ -67,7 +71,18 @@ beforeEach(async () => {
         : { transferId: request.transferId, outcome: 'withdrawn' },
     })
   }
-  dispatcher.register({ [REALM_TOPICS.withdraw]: village, ...handlers })
+  /** Village simulé : verse les ressources, sans réponse. */
+  const deposit: MessageHandler = async (message) => {
+    const request = TransferRequest.parse(message.payload)
+    for (const [resource, amount = 0] of Object.entries(request.resources)) {
+      stock[resource] += amount
+    }
+  }
+  dispatcher.register({
+    [REALM_TOPICS.withdraw]: village,
+    [REALM_TOPICS.deposit]: deposit,
+    ...handlers,
+  })
   // Demandeur simulé des mouvements d'objets : il retient les réponses de la Forge.
   dispatcher.register({
     'demandeur.reponse': async (message) => {
@@ -187,5 +202,49 @@ describe('Service de la Forge', () => {
         payload: { transferId: 'm1', playerId: 'bob', items: { catapult: 1 } },
       }),
     ).rejects.toThrow()
+  })
+
+  it('annule une fabrication en cours et restitue au village la moitié de son coût, une fois', async () => {
+    await service.placeOrder('alice', 'axe')
+    now += minutes(1)
+
+    const result = await service.cancelOrder('alice', 'o1')
+    expect(result.ok && result.view).toMatchObject({
+      busy: 0,
+      orders: [{ status: 'cancelled', refund: { wood: 30, stone: 10 } }],
+    })
+    // 60 bois et 20 pierres prélevés, 30 bois et 10 pierres restitués.
+    expect(stock).toEqual({ wood: 70, stone: 90, gold: 0 })
+
+    expect(await service.cancelOrder('alice', 'o1')).toEqual({
+      ok: false,
+      error: { code: 'NOT_CANCELLABLE' },
+    })
+    expect(stock).toEqual({ wood: 70, stone: 90, gold: 0 })
+  })
+
+  it("libère la place d'un paiement sans réponse, et restitue tout le coût s'il arrive tard", async () => {
+    silent = true
+    await service.placeOrder('alice', 'axe')
+    expect(stock).toEqual({ wood: 40, stone: 80, gold: 0 })
+
+    // Passé le délai de paiement, la commande expire et l'atelier accepte une autre commande.
+    now += minutes(10)
+    expect((await service.getView('alice')).orders[0].status).toBe('expired')
+    silent = false
+    const pickaxe = await service.placeOrder('alice', 'pickaxe')
+    expect(pickaxe.ok && pickaxe.view.orders[0].status).toBe('forging')
+
+    // La réponse perdue arrive enfin : la première commande est remboursée en entier.
+    await handlers['forge.transfer-result']({
+      id: 'tardive',
+      topic: 'forge.transfer-result',
+      attempt: 1,
+      payload: { transferId: 'forge:alice:o1:pay', outcome: 'withdrawn' },
+    })
+    await dispatch()
+    expect((await service.getView('alice')).orders[1].status).toBe('expired')
+    // Seul reste prélevé le coût de la pioche : 40 bois et 60 pierres.
+    expect(stock).toEqual({ wood: 60, stone: 40, gold: 0 })
   })
 })

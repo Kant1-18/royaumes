@@ -4,12 +4,16 @@ import {
   inventoryAt,
   isActive,
   isForged,
+  isPaymentExpired,
   type Order,
   type OrderStatus,
   type WorkshopState,
 } from './workshop'
 
-/** État d'une commande présenté au joueur : l'état enregistré, ou « forgé » après l'échéance. */
+/**
+ * État d'une commande présenté au joueur : l'état enregistré, « forgé » après l'échéance de
+ * la fabrication, ou « expiré » après le délai de paiement.
+ */
 export type OrderViewStatus = OrderStatus | 'forged'
 
 export type OrderView = Omit<Order, 'status'> & { status: OrderViewStatus }
@@ -30,16 +34,20 @@ export interface WorkshopView {
   asOf: number
 }
 
+/** État d'une commande à l'instant now, tel que le joueur le voit. */
+function statusAt(order: Order, now: number): OrderViewStatus {
+  if (isForged(order, now)) return 'forged'
+  if (isPaymentExpired(order, now)) return 'expired'
+  return order.status
+}
+
 export function toView(state: WorkshopState, capacity: number, now: number): WorkshopView {
   const orders = Object.values(state.orders).sort((a, b) => b.placedAt - a.placedAt)
 
   return {
     capacity,
     busy: orders.filter((order) => isActive(order, now)).length,
-    orders: orders.map((order) => ({
-      ...order,
-      status: isForged(order, now) ? 'forged' : order.status,
-    })),
+    orders: orders.map((order) => ({ ...order, status: statusAt(order, now) })),
     inventory: inventoryAt(state, now),
     asOf: now,
   }

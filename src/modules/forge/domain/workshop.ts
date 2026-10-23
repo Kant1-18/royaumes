@@ -3,13 +3,24 @@
  * L'état d'une commande résume l'avancement de la saga de fabrication.
  * Ce fichier est écrit en TypeScript pur : il n'importe aucun autre module.
  */
-import { type Amounts, isRecipe, RECIPE_CATALOG, RECIPES, type Recipe } from './recipes'
+import {
+  type Amounts,
+  isRecipe,
+  RECIPE_CATALOG,
+  RECIPES,
+  REFUND_SHARE,
+  type Recipe,
+} from './recipes'
 
 /**
- * États enregistrés d'une commande. L'état « forgé » n'est jamais enregistré :
- * il se déduit de l'échéance de la fabrication, à la lecture.
+ * États enregistrés d'une commande. L'état « forgé » n'est jamais enregistré : il se déduit
+ * de l'échéance de la fabrication, à la lecture. L'état « expiré » est enregistré si le
+ * paiement arrive après son délai ; sinon, il se déduit aussi de ce délai, à la lecture.
  */
-export type OrderStatus = 'paying' | 'forging' | 'failed'
+export type OrderStatus = 'paying' | 'forging' | 'failed' | 'cancelled' | 'expired'
+
+/** Délai accordé au paiement d'une commande ; au-delà, la commande expire. */
+export const PAYMENT_TIMEOUT_MS = 10 * 60_000
 
 /** Quantités d'objets, par recette. */
 export type Items = Partial<Record<Recipe, number>>
@@ -29,6 +40,8 @@ export interface Order {
   readyAt: number | null
   /** Quantités qui manquaient, si le paiement a été refusé. */
   missing: Amounts | null
+  /** Ressources restituées au village, si la commande a été annulée ou a expiré ; null sinon. */
+  refund: Amounts | null
 }
 
 /** Mouvement d'objets demandé par un autre module, comme le Marché, et son issue. */
@@ -63,6 +76,8 @@ export type WorkshopEvent =
     }
   | { type: 'ForgingStarted'; data: { orderId: string; readyAt: number; at: number } }
   | { type: 'OrderFailed'; data: { orderId: string; missing: Amounts; at: number } }
+  | { type: 'OrderCancelled'; data: { orderId: string; refund: Amounts; at: number } }
+  | { type: 'OrderExpired'; data: { orderId: string; refund: Amounts; at: number } }
   // Mouvements d'objets demandés par un autre module. Chacun porte l'identifiant du
   // mouvement, choisi par le demandeur, qui permet d'en reconnaître un doublon.
   | { type: 'ItemsWithdrawn'; data: { transferId: string; items: Items; at: number } }
@@ -73,12 +88,11 @@ export type WorkshopEvent =
 // Commandes
 // ---------------------------------------------------------------------------
 
-// DETTE TECHNIQUE DT-008 (docs/qualite/dette-technique.md) : aucune commande ne permet
-// d'annuler une fabrication ; une commande payée va toujours jusqu'à son échéance.
 export type WorkshopCommand =
-  // Commande du joueur. La capacité est le niveau de la forge de son village,
+  // Commandes du joueur. La capacité est le niveau de la forge de son village,
   // lu par le service dans le langage publié du Village.
   | { type: 'PlaceOrder'; orderId: string; playerId: string; recipe: string; capacity: number }
+  | { type: 'CancelOrder'; orderId: string }
   // Commande de la saga, issue de la réponse du Village.
   | {
       type: 'RecordTransferResult'
@@ -98,6 +112,8 @@ export type WorkshopError =
   | { code: 'ORDER_EXISTS' }
   | { code: 'FORGE_NOT_BUILT' }
   | { code: 'CAPACITY_REACHED'; capacity: number }
+  | { code: 'ORDER_NOT_FOUND' }
+  | { code: 'NOT_CANCELLABLE' }
 
 export type Decision = { ok: true; events: WorkshopEvent[] } | { ok: false; error: WorkshopError }
 
@@ -109,7 +125,7 @@ const accept = (...events: WorkshopEvent[]): Decision => ({ ok: true, events })
 // ---------------------------------------------------------------------------
 
 /** Étapes de la saga qui donnent lieu à un mouvement de ressources. */
-export type TransferStep = 'pay'
+export type TransferStep = 'pay' | 'refund'
 
 /**
  * Identifiant d'un mouvement de ressources : il sert de clé d'idempotence au Village.
@@ -138,11 +154,28 @@ export function parseTransferId(transferId: string) {
 export const isForged = (order: Order, now: number) =>
   order.status === 'forging' && order.readyAt !== null && now >= order.readyAt
 
+/** Vrai si le délai de paiement de la commande est écoulé à l'instant now, sans réponse. */
+export const isPaymentExpired = (order: Order, now: number) =>
+  order.status === 'paying' && now >= order.placedAt + PAYMENT_TIMEOUT_MS
+
 /** Vrai si la commande occupe l'atelier à l'instant now : paiement attendu, ou fabrication. */
 export const isActive = (order: Order, now: number) =>
-  // DETTE TECHNIQUE DT-009 (docs/qualite/dette-technique.md) : une commande en attente de
-  // paiement reste active sans limite de durée, même si son message est abandonné.
-  order.status === 'paying' || (order.status === 'forging' && !isForged(order, now))
+  // Un paiement sans réponse dans son délai libère sa place, même si son message est abandonné.
+  (order.status === 'paying' && !isPaymentExpired(order, now)) ||
+  (order.status === 'forging' && !isForged(order, now))
+
+/**
+ * Ressources restituées à l'annulation : une part du coût, arrondie à l'entier inférieur
+ * pour chaque ressource. Une ressource dont la part est nulle n'est pas restituée.
+ */
+export function refundOf(cost: Amounts): Amounts {
+  const refund: Amounts = {}
+  for (const [resource, amount = 0] of Object.entries(cost)) {
+    const share = Math.floor(amount * REFUND_SHARE)
+    if (share > 0) refund[resource] = share
+  }
+  return refund
+}
 
 /**
  * Inventaire du joueur à l'instant now : les objets forgés, augmentés des objets reçus
@@ -188,6 +221,7 @@ export function evolve(state: WorkshopState, event: WorkshopEvent): WorkshopStat
         placedAt: at,
         readyAt: null,
         missing: null,
+        refund: null,
       }
       return { ...state, playerId, orders: { ...state.orders, [orderId]: order } }
     }
@@ -195,6 +229,10 @@ export function evolve(state: WorkshopState, event: WorkshopEvent): WorkshopStat
       return update(state, event.data.orderId, { status: 'forging', readyAt: event.data.readyAt })
     case 'OrderFailed':
       return update(state, event.data.orderId, { status: 'failed', missing: event.data.missing })
+    case 'OrderCancelled':
+      return update(state, event.data.orderId, { status: 'cancelled', refund: event.data.refund })
+    case 'OrderExpired':
+      return update(state, event.data.orderId, { status: 'expired', refund: event.data.refund })
     case 'ItemsWithdrawn':
       return record(state, event.data.transferId, 'withdrawn', event.data.items, event.data.at)
     case 'ItemWithdrawalRefused':
@@ -228,7 +266,7 @@ export function decide(state: WorkshopState, command: WorkshopCommand, now: numb
       if (!isRecipe(recipe)) return fail({ code: 'UNKNOWN_RECIPE' })
       if (orderId in state.orders) return fail({ code: 'ORDER_EXISTS' })
       if (capacity < 1) return fail({ code: 'FORGE_NOT_BUILT' })
-      // Une commande forgée ou échouée libère sa place dans l'atelier.
+      // Une commande forgée, échouée, annulée ou expirée libère sa place dans l'atelier.
       const active = Object.values(state.orders).filter((order) => isActive(order, now)).length
       if (active >= capacity) return fail({ code: 'CAPACITY_REACHED', capacity })
       // Le coût est copié dans l'événement : un rééquilibrage ultérieur des recettes
@@ -236,6 +274,22 @@ export function decide(state: WorkshopState, command: WorkshopCommand, now: numb
       return accept({
         type: 'OrderPlaced',
         data: { orderId, playerId, recipe, cost: RECIPE_CATALOG[recipe].cost, at: now },
+      })
+    }
+
+    case 'CancelOrder': {
+      const order = state.orders[command.orderId]
+      if (!order) return fail({ code: 'ORDER_NOT_FOUND' })
+      // Seule une fabrication en cours est annulable : ni une commande en attente de paiement,
+      // ni un objet déjà forgé, ni une commande échouée ou déjà annulée.
+      if (order.status !== 'forging' || isForged(order, now)) {
+        return fail({ code: 'NOT_CANCELLABLE' })
+      }
+      // La part restituée se calcule sur le coût copié dans la commande, et non sur le
+      // catalogue actuel : un rééquilibrage ne change pas le remboursement.
+      return accept({
+        type: 'OrderCancelled',
+        data: { orderId: order.orderId, refund: refundOf(order.cost), at: now },
       })
     }
 
@@ -270,8 +324,8 @@ export function decide(state: WorkshopState, command: WorkshopCommand, now: numb
 
 /**
  * Réponse du Village à un paiement. Seule la réponse attendue par une commande en attente
- * de paiement fait progresser la saga ; toute autre réponse (doublon, réponse tardive) est
- * ignorée.
+ * de paiement fait progresser la saga ; toute autre réponse (doublon, réponse à une
+ * commande déjà terminée) est ignorée.
  */
 function recordTransferResult(
   state: WorkshopState,
@@ -289,6 +343,11 @@ function recordTransferResult(
       type: 'OrderFailed',
       data: { orderId, missing: result.missing ?? {}, at: now },
     })
+  }
+  // Paiement obtenu après son délai : la place a pu être reprise par une autre commande.
+  // La commande expire, et la totalité de son coût est restituée.
+  if (isPaymentExpired(order, now)) {
+    return accept({ type: 'OrderExpired', data: { orderId, refund: order.cost, at: now } })
   }
   // La fabrication commence au paiement : son échéance en découle.
   const readyAt = now + RECIPE_CATALOG[order.recipe].durationMs

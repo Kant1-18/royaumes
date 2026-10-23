@@ -32,15 +32,17 @@ export interface ForgeServiceOptions {
 
 /** Traduit une demande de la saga en message de la boîte d'envoi. */
 function toMessage(request: SagaRequest): NewMessage {
-  return {
-    topic: REALM_TOPICS.withdraw,
-    payload: {
-      transferId: request.transferId,
-      playerId: request.playerId,
-      resources: request.resources,
-      // Adresse de retour : la réponse du Village fera progresser la saga.
-      replyTo: FORGE_TOPICS.transferResult,
-    },
+  const { transferId, playerId, resources } = request
+  switch (request.kind) {
+    case 'withdraw':
+      return {
+        topic: REALM_TOPICS.withdraw,
+        // Adresse de retour : la réponse du Village fera progresser la saga.
+        payload: { transferId, playerId, resources, replyTo: FORGE_TOPICS.transferResult },
+      }
+    case 'deposit':
+      // Un versement ne peut pas être refusé : aucune réponse n'est demandée.
+      return { topic: REALM_TOPICS.deposit, payload: { transferId, playerId, resources } }
   }
 }
 
@@ -123,6 +125,17 @@ export function createForgeService(
   }
 
   /**
+   * Annule une fabrication en cours au nom d'un joueur. La compensation, une part du coût
+   * versée au village, est enregistrée avec l'annulation, puis la boîte d'envoi distribuée.
+   */
+  async function cancelOrder(playerId: string, orderId: string): Promise<CommandResult> {
+    const decision = await process(playerId, { type: 'CancelOrder', orderId })
+    if (!decision.ok) return decision
+    await dispatch()
+    return { ok: true, orderId, view: await viewOf(playerId) }
+  }
+
+  /**
    * Vue de l'atelier. La boîte d'envoi est d'abord distribuée : une saga interrompue reprend
    * dès que le joueur consulte sa forge.
    */
@@ -161,7 +174,7 @@ export function createForgeService(
     })
   }
 
-  return { placeOrder, getView, step, transfer }
+  return { placeOrder, cancelOrder, getView, step, transfer }
 }
 
 /** Type du service, déduit de sa fabrique. */

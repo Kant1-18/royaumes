@@ -36,6 +36,8 @@ const ORDER_STATUS: Record<OrderViewStatus, string> = {
   forging: 'En fabrication',
   forged: 'Forgé',
   failed: 'Échouée : stock insuffisant',
+  cancelled: 'Annulée',
+  expired: 'Expirée : paiement sans réponse',
 }
 
 /** Message affiché au joueur pour chaque erreur. */
@@ -45,6 +47,8 @@ const ERRORS: Record<WorkshopError['code'] | 'INVALID_INPUT', string> = {
   ORDER_EXISTS: 'Commande déjà passée.',
   FORGE_NOT_BUILT: "La forge de votre village n'est pas construite.",
   CAPACITY_REACHED: "L'atelier est complet.",
+  ORDER_NOT_FOUND: 'Commande introuvable.',
+  NOT_CANCELLABLE: 'Seule une fabrication en cours peut être annulée.',
 }
 
 /** Affiche des quantités de ressources : « 60 bois, 20 pierre ». */
@@ -70,8 +74,18 @@ function remaining(ms: number) {
     : `${seconds % 60} s`
 }
 
+/** Ressources restituées, pour une commande annulée ou expirée : « 30 bois, 10 pierre ». */
+function refundText(order: OrderView) {
+  return Object.entries(order.refund ?? {})
+    .map(([resource, amount]) => `${amount} ${look(resource).label.toLowerCase()}`)
+    .join(', ')
+}
+
 /** Compte rendu d'une commande, à partir de sa vue renvoyée par l'API. */
 function outcomeOf(order: OrderView): string {
+  if (order.status === 'cancelled') {
+    return `${look(order.recipe).label} annulée : ${refundText(order)} restitués au village.`
+  }
   if (order.status === 'failed' && order.missing) {
     const missing = Object.entries(order.missing)
       .map(([resource, amount]) => `${amount} ${look(resource).label.toLowerCase()}`)
@@ -114,9 +128,8 @@ export function ForgeScreen() {
     if (due) refresh()
   }, [due, refresh])
 
-  // COMMANDE : la réponse contient la vue de l'atelier, ou une erreur.
-  async function forge(recipe: Recipe) {
-    const res = await client.orders.$post({ json: { recipe } })
+  // COMMANDES : chaque réponse contient la vue de l'atelier, ou une erreur.
+  async function handle(res: Response) {
     const body = (await res.json()) as
       | { orderId: string; view: WorkshopView }
       | { error: { code: keyof typeof ERRORS } }
@@ -128,6 +141,10 @@ export function ForgeScreen() {
     const order = body.view.orders.find((o) => o.orderId === body.orderId)
     if (order) setMessage({ text: outcomeOf(order), error: order.status === 'failed' })
   }
+
+  const forge = async (recipe: Recipe) => handle(await client.orders.$post({ json: { recipe } }))
+  const cancel = async (orderId: string) =>
+    handle(await client.orders[':orderId'].cancel.$post({ param: { orderId } }))
 
   const title = (
     <div className="row" style={{ justifyContent: 'space-between' }}>
@@ -160,7 +177,7 @@ export function ForgeScreen() {
 
   const full = view.busy >= view.capacity
   const active = view.orders.filter((o) => o.status === 'paying' || o.status === 'forging')
-  const done = view.orders.filter((o) => o.status === 'forged' || o.status === 'failed')
+  const done = view.orders.filter((o) => o.status !== 'paying' && o.status !== 'forging')
 
   return (
     <>
@@ -203,6 +220,11 @@ export function ForgeScreen() {
                   ? `Prêt dans ${remaining(order.readyAt - now)}`
                   : ORDER_STATUS[order.status]}
               </span>
+              {order.status === 'forging' && (
+                <button type="button" onClick={() => cancel(order.orderId)}>
+                  Annuler
+                </button>
+              )}
             </li>
           ))}
         </ul>
@@ -231,6 +253,7 @@ export function ForgeScreen() {
               <Entity kind={order.recipe} showLabel />
               <span className={order.status === 'failed' ? 'error' : 'muted'}>
                 {ORDER_STATUS[order.status]}
+                {order.refund && ` (${refundText(order)} restitués)`}
               </span>
             </li>
           ))}
