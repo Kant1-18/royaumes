@@ -14,3 +14,9 @@ export const FORGE_STREAM_PREFIX = 'forge-'
 
 /** Nom du flux qui contient les événements de l'atelier d'un joueur. */
 export const forgeStream = (userId: string) => `${FORGE_STREAM_PREFIX}${userId}`
+
+/** Sujets des messages adressés à la Forge. */
+export const FORGE_TOPICS = {
+  /** Réponse du Village à un mouvement de ressources. */
+  transferResult: 'forge.transfer-result',
+} as const
