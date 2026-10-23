@@ -19,6 +19,17 @@ import {
 /** Client HTTP typé, déduit de la sous-application Hono du module. */
 const client = hc<ForgeApi>('/api/forge')
 
+/**
+ * Inventaire d'objets du joueur connecté, par recette ; null si la Forge ne répond pas.
+ * C'est la lecture offerte aux écrans des autres modules, comme le Marché : la route et
+ * le client de la Forge restent ainsi l'affaire de la Forge.
+ */
+export async function readInventory(): Promise<Record<Recipe, number> | null> {
+  const res = await client.index.$get()
+  if (!res.ok) return null
+  return (await res.json()).view.inventory
+}
+
 /** Libellé de chaque état d'une commande. */
 const ORDER_STATUS: Record<OrderViewStatus, string> = {
   paying: 'Paiement en cours',
@@ -94,7 +105,8 @@ export function ForgeScreen() {
 
   // Une fabrication qui atteint son échéance est relue, pour mettre à jour l'inventaire.
   // DETTE TECHNIQUE DT-012 (docs/qualite/dette-technique.md) : sans canal temps réel, un
-  // paiement en attente ou une action d'un autre onglet n'apparaît qu'au rechargement.
+  // paiement en attente, un objet échangé au Marché ou une action d'un autre onglet
+  // n'apparaît qu'au rechargement.
   const due = view?.orders.some(
     (order) => order.status === 'forging' && order.readyAt !== null && now >= order.readyAt,
   )

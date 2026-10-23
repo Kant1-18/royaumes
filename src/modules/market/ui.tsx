@@ -1,7 +1,8 @@
 'use client'
 import { hc } from 'hono/client'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { RECIPES, type WorkshopView } from '@/modules/forge/contracts'
+import { RECIPES } from '@/modules/forge/contracts'
+import { readInventory } from '@/modules/forge/ui'
 import { RESOURCES } from '@/modules/realm/contracts'
 import { useChannel } from '@/platform/realtime/use-channel'
 import { Entity } from '@/ui/entity'
@@ -99,13 +100,10 @@ export function MarketScreen() {
     return body.position
   }, [])
 
-  // La Forge n'expose pas de client typé au Marché : son API n'est pas une entrée publique.
-  // La vue de l'atelier est lue par une simple requête, et typée par le contrat de la Forge.
+  // L'inventaire est lu par l'interface de la Forge, l'une de ses entrées publiques.
   const refreshInventory = useCallback(async () => {
-    const res = await fetch('/api/forge')
-    if (!res.ok) return
-    const { view } = (await res.json()) as { view: WorkshopView }
-    setInventory(view.inventory)
+    const inventory = await readInventory()
+    if (inventory) setInventory(inventory)
   }, [])
 
   useEffect(() => {
@@ -117,6 +115,8 @@ export function MarketScreen() {
   // la projection ait atteint la position de l'événement annoncé.
   const wanted = useRef(0)
   const following = useRef(false)
+  // DETTE TECHNIQUE DT-013 (docs/qualite/dette-technique.md) : le canal n'annonce que les offres ;
+  // l'inventaire d'objets n'est relu qu'au chargement et après une commande du joueur.
   const status = useChannel(MARKET_CHANNEL, async (event) => {
     wanted.current = Math.max(wanted.current, event.position)
     if (following.current) return

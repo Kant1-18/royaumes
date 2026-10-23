@@ -8,7 +8,7 @@ export function createEventStoreWorkshopRepository(store: EventStore): WorkshopR
   return {
     async load(playerId) {
       // DETTE TECHNIQUE DT-011 (docs/qualite/dette-technique.md) : le flux est relu en entier,
-      // sans instantané, à chaque commande et à chaque consultation.
+      // sans instantané, à chaque commande, mouvement d'objets et consultation.
       const stored = await store.read(forgeStream(playerId))
 
       const events = stored.map((e) => ({ type: e.type, data: e.data }) as WorkshopEvent)
