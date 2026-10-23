@@ -46,7 +46,7 @@ export const initialState: VillageState = {
   founded: false,
   name: '',
   stock: { wood: 0, stone: 0, gold: 0 },
-  levels: { sawmill: 0, quarry: 0, mine: 0 },
+  levels: { sawmill: 0, quarry: 0, mine: 0, forge: 0 },
   asOf: 0,
   transfers: {},
 }
@@ -111,7 +111,8 @@ export function productionPerMinute(levels: Levels): Stock {
   const rates: Stock = { wood: 0, stone: 0, gold: 0 }
   for (const building of BUILDINGS) {
     const { produces, perMinute } = CATALOG[building]
-    rates[produces] += perMinute * levels[building]
+    // Un bâtiment qui ne produit rien, comme la forge, n'entre pas dans la production.
+    if (produces) rates[produces] += perMinute * levels[building]
   }
   return rates
 }

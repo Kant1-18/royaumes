@@ -29,7 +29,7 @@ describe('Village - fondation', () => {
 
     expect(state.name).toBe('Valombre')
     expect(state.stock).toEqual({ wood: 100, stone: 50, gold: 0 })
-    expect(state.levels).toEqual({ sawmill: 1, quarry: 1, mine: 0 })
+    expect(state.levels).toEqual({ sawmill: 1, quarry: 1, mine: 0, forge: 0 })
   })
 
   it('refuse de fonder un second village', () => {
@@ -117,5 +117,18 @@ describe('Village - amélioration', () => {
     decide(state, { type: 'UpgradeBuilding', building: 'sawmill' }, T0 + minutes(60))
     toView(state, T0 + minutes(60))
     expect(state).toEqual(copy)
+  })
+})
+
+describe('Village - forge', () => {
+  it('ne produit aucune ressource, quel que soit son niveau', () => {
+    const forgeAtMax: VillageEvent = {
+      type: 'BuildingUpgraded',
+      data: { building: 'forge', toLevel: 10, cost: {}, at: T0 },
+    }
+    const view = toView(replay([founded, forgeAtMax]), T0 + minutes(10))
+
+    expect(view.ratesPerMinute).toEqual({ wood: 10, stone: 6, gold: 0 })
+    expect(view.stock).toEqual({ wood: 200, stone: 110, gold: 0 })
   })
 })

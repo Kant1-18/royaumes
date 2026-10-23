@@ -19,6 +19,7 @@ export const theme: Record<string, Look> = {
   sawmill: { glyph: '🪚', label: 'Scierie' },
   quarry: { glyph: '⛏️', label: 'Carrière' },
   mine: { glyph: '⚒️', label: 'Mine' },
+  forge: { glyph: '🔨', label: 'Forge' },
   dungeon: { glyph: '⚔️', label: 'Donjon' },
   hero: { glyph: '🛡️', label: 'Héros' },
   companion: { glyph: '🤖', label: 'Compagnon' },
