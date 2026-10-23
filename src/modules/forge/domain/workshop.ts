@@ -52,6 +52,8 @@ export type WorkshopEvent =
 // Commandes
 // ---------------------------------------------------------------------------
 
+// DETTE TECHNIQUE DT-008 (docs/qualite/dette-technique.md) : aucune commande ne permet
+// d'annuler une fabrication ; une commande payée va toujours jusqu'à son échéance.
 export type WorkshopCommand =
   // Commande du joueur. La capacité est le niveau de la forge de son village,
   // lu par le service dans le langage publié du Village.
@@ -111,6 +113,8 @@ export const isForged = (order: Order, now: number) =>
 
 /** Vrai si la commande occupe l'atelier à l'instant now : paiement attendu, ou fabrication. */
 export const isActive = (order: Order, now: number) =>
+  // DETTE TECHNIQUE DT-009 (docs/qualite/dette-technique.md) : une commande en attente de
+  // paiement reste active sans limite de durée, même si son message est abandonné.
   order.status === 'paying' || (order.status === 'forging' && !isForged(order, now))
 
 // ---------------------------------------------------------------------------

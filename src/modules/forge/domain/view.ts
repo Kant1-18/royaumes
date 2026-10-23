@@ -13,7 +13,10 @@ export interface WorkshopView {
   /** Nombre de commandes qui occupent l'atelier. */
   busy: number
   /** Commandes, de la plus récente à la plus ancienne. */
+  // DETTE TECHNIQUE DT-010 (docs/qualite/dette-technique.md) : tout l'historique est
+  // présenté, sans pagination.
   orders: OrderView[]
+
   /** Nombre d'objets forgés, par recette. */
   inventory: Record<Recipe, number>
   /** Instant auquel la vue a été calculée. */
