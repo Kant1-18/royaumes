@@ -1,0 +1,197 @@
+import { describe, expect, it } from 'vitest'
+import type { Amounts } from './recipes'
+import { requestsFor, type SagaRequest } from './saga'
+import { toView } from './view'
+import {
+  decide,
+  evolve,
+  initialState,
+  parseTransferId,
+  type WorkshopCommand,
+  type WorkshopState,
+} from './workshop'
+
+const T0 = Date.UTC(2026, 0, 1)
+const minutes = (n: number) => n * 60_000
+
+/** Applique une commande acceptée ; renvoie le nouvel état, les événements et les demandes. */
+function play(state: WorkshopState, command: WorkshopCommand, now = T0) {
+  const decision = decide(state, command, now)
+  if (!decision.ok) throw new Error(decision.error.code)
+  let current = state
+  const requests: SagaRequest[] = []
+  for (const event of decision.events) {
+    current = evolve(current, event)
+    requests.push(...requestsFor(current, event))
+  }
+  return { state: current, events: decision.events, requests }
+}
+
+const order = (orderId: string, recipe = 'axe', capacity = 1): WorkshopCommand => ({
+  type: 'PlaceOrder',
+  orderId,
+  playerId: 'alice',
+  recipe,
+  capacity,
+})
+const paid = (orderId: string): WorkshopCommand => ({
+  type: 'RecordTransferResult',
+  transferId: `forge:alice:${orderId}:pay`,
+  outcome: 'withdrawn',
+})
+const refused = (orderId: string, missing: Amounts): WorkshopCommand => ({
+  type: 'RecordTransferResult',
+  transferId: `forge:alice:${orderId}:pay`,
+  outcome: 'refused',
+  missing,
+})
+
+// Une hache commandée, puis payée à T0 : sa fabrication dure 2 minutes.
+const paying = play(initialState, order('o1')).state
+const forging = play(paying, paid('o1')).state
+
+describe('Forge - commande', () => {
+  it("refuse un objet qui n'est pas au catalogue des recettes", () => {
+    expect(decide(initialState, order('o1', 'catapult'), T0)).toEqual({
+      ok: false,
+      error: { code: 'UNKNOWN_RECIPE' },
+    })
+  })
+
+  it("refuse toute commande tant que la forge du village n'est pas construite", () => {
+    expect(decide(initialState, order('o1', 'axe', 0), T0)).toEqual({
+      ok: false,
+      error: { code: 'FORGE_NOT_BUILT' },
+    })
+  })
+
+  it('limite le nombre de commandes simultanées au niveau de la forge', () => {
+    let state = play(initialState, order('o1', 'axe', 2)).state
+    state = play(state, order('o2', 'axe', 2)).state
+    expect(decide(state, order('o3', 'axe', 2), T0)).toEqual({
+      ok: false,
+      error: { code: 'CAPACITY_REACHED', capacity: 2 },
+    })
+    // Avec une forge de niveau 3, la troisième commande est acceptée.
+    expect(decide(state, order('o3', 'axe', 3), T0).ok).toBe(true)
+  })
+
+  it("libère la place d'une commande forgée ou dont le paiement a été refusé", () => {
+    // La hache occupe l'atelier pendant sa fabrication, et le libère à son échéance.
+    expect(decide(forging, order('o2'), T0 + minutes(1)).ok).toBe(false)
+    expect(decide(forging, order('o2'), T0 + minutes(2)).ok).toBe(true)
+
+    const failed = play(paying, refused('o1', { wood: 10 })).state
+    expect(decide(failed, order('o2'), T0).ok).toBe(true)
+  })
+
+  it('refuse un identifiant de commande déjà utilisé', () => {
+    expect(decide(forging, order('o1', 'axe', 5), T0)).toEqual({
+      ok: false,
+      error: { code: 'ORDER_EXISTS' },
+    })
+  })
+})
+
+describe('Forge - paiement et fabrication', () => {
+  it('demande au Village le prélèvement du coût de la recette', () => {
+    const { state, requests } = play(initialState, order('o1', 'sword'))
+    expect(state.orders.o1).toMatchObject({ status: 'paying', readyAt: null })
+    expect(requests).toEqual([
+      {
+        kind: 'withdraw',
+        transferId: 'forge:alice:o1:pay',
+        playerId: 'alice',
+        resources: { wood: 30, stone: 80, gold: 20 },
+      },
+    ])
+  })
+
+  it('fait échouer la commande si le stock ne suffit pas, sans rien à compenser', () => {
+    const { state, requests } = play(paying, refused('o1', { stone: 15 }))
+    expect(state.orders.o1).toMatchObject({ status: 'failed', missing: { stone: 15 } })
+    expect(requests).toEqual([])
+    expect(toView(state, 1, T0 + minutes(60)).inventory.axe).toBe(0)
+  })
+
+  it("forge l'objet à l'échéance de sa fabrication, qui commence au paiement", () => {
+    const { state, requests } = play(paying, paid('o1'), T0 + minutes(1))
+    expect(state.orders.o1).toMatchObject({ status: 'forging', readyAt: T0 + minutes(3) })
+    expect(requests).toEqual([])
+
+    const before = toView(state, 1, T0 + minutes(3) - 1)
+    expect(before.orders[0].status).toBe('forging')
+    expect(before.inventory.axe).toBe(0)
+
+    const after = toView(state, 1, T0 + minutes(3))
+    expect(after.orders[0].status).toBe('forged')
+    expect(after.inventory.axe).toBe(1)
+    expect(after.busy).toBe(0)
+  })
+})
+
+describe('Forge - idempotence', () => {
+  it('ignore une réponse du Village reçue en double, ou contraire à la première', () => {
+    expect(decide(forging, paid('o1'), T0)).toEqual({ ok: true, events: [] })
+    expect(decide(forging, refused('o1', { wood: 5 }), T0)).toEqual({ ok: true, events: [] })
+
+    const failed = play(paying, refused('o1', { wood: 5 })).state
+    expect(decide(failed, paid('o1'), T0)).toEqual({ ok: true, events: [] })
+  })
+
+  it("ignore les mouvements qui ne viennent pas de la Forge, ou d'une commande inconnue", () => {
+    const market: WorkshopCommand = {
+      type: 'RecordTransferResult',
+      transferId: 'o1:reserve',
+      outcome: 'withdrawn',
+    }
+    expect(decide(paying, market, T0)).toEqual({ ok: true, events: [] })
+    expect(decide(paying, paid('inconnue'), T0)).toEqual({ ok: true, events: [] })
+  })
+
+  it("retrouve le joueur et la commande à partir de l'identifiant d'un mouvement", () => {
+    expect(parseTransferId('forge:alice:o1:pay')).toEqual({
+      playerId: 'alice',
+      orderId: 'o1',
+      step: 'pay',
+    })
+    expect(parseTransferId('o1:reserve')).toBeNull()
+  })
+})
+
+describe('Forge - conservation des ressources', () => {
+  it('ne prélève que le coût des commandes payées, forgées ou en fabrication', () => {
+    // Trois commandes dans une forge de niveau 3 : une forgée, une en fabrication, une refusée.
+    const steps: [WorkshopCommand, number][] = [
+      [order('axe', 'axe', 3), T0],
+      [order('crown', 'crown', 3), T0],
+      [order('sword', 'sword', 3), T0],
+      [paid('axe'), T0],
+      [paid('crown'), T0],
+      [refused('sword', { gold: 20 }), T0],
+    ]
+    let state = initialState
+    const requests: SagaRequest[] = []
+    for (const [command, at] of steps) {
+      const result = play(state, command, at)
+      state = result.state
+      requests.push(...result.requests)
+    }
+
+    // Le Village n'exécute que les prélèvements dont le paiement a été accepté.
+    const refusedIds = new Set(['forge:alice:sword:pay'])
+    const withdrawn: Record<string, number> = {}
+    for (const request of requests) {
+      if (refusedIds.has(request.transferId)) continue
+      for (const [resource, amount] of Object.entries(request.resources)) {
+        withdrawn[resource] = (withdrawn[resource] ?? 0) + (amount ?? 0)
+      }
+    }
+
+    // Hache (60 bois, 20 pierres) et couronne (50 pierres, 100 or), rien pour l'épée refusée.
+    expect(withdrawn).toEqual({ wood: 60, stone: 70, gold: 100 })
+    const view = toView(state, 3, T0 + minutes(5))
+    expect(view.inventory).toMatchObject({ axe: 1, crown: 0, sword: 0 })
+    expect(view.busy).toBe(1)
+  })
+})
