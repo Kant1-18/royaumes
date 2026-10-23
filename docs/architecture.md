@@ -66,7 +66,7 @@ flowchart TB
     dungeon["dungeon<br/>Donjon : domaine et IA, service,<br/>dépôt fondé sur le journal, API, canal discret,<br/>projection des expéditions ouvertes"]
     ranking["ranking<br/>Classement : projection,<br/>lecture, API, canal global"]
     market["market<br/>Marché : orchestrateur de la saga,<br/>projection des offres, API, canal global"]
-    forge["forge<br/>Forge : domaine, orchestrateur du paiement,<br/>dépôt fondé sur le journal, API,<br/>projection de la capacité des ateliers"]
+    forge["forge<br/>Forge : domaine, orchestrateur du paiement<br/>et de sa compensation, dépôt fondé sur le journal,<br/>API, canal discret, projection de la capacité des ateliers"]
     tavern["tavern<br/>Taverne : messages et présence<br/>en tables, API, canal à source propre"]
   end
   subgraph platform["src/platform"]
@@ -87,7 +87,7 @@ flowchart TB
   createapi --> system & realm & dungeon & ranking & market & forge & tavern & auth & http & realtime & projection & outbox & privacy & cron
   realm --> store & realtime & http & outbox
   market --> store & projection & realtime & http & outbox
-  forge --> store & projection & http & outbox
+  forge --> store & projection & realtime & http & outbox
   dungeon --> store & projection & realtime & http
   ranking --> projection & realtime & http
   tavern --> realtime & http & db
@@ -122,14 +122,18 @@ et la boîte d'envoi (ADR 0007).
 Le module `forge` dépend du Village de deux manières, toujours par ses seuls contrats. Pour lire,
 il tient la capacité de chaque atelier par une projection des événements `BuildingUpgraded` du
 Village (ADR 0010). Pour écrire, il fait payer chaque commande par un message `realm.withdraw`,
-dont la réponse fait démarrer la fabrication ou échouer la commande (ADR 0012).
+dont la réponse fait démarrer la fabrication ou échouer la commande (ADR 0012). L'annulation
+d'une fabrication est compensée par un message `realm.deposit`, qui restitue la moitié du coût
+au village ; un paiement obtenu après son délai est restitué en entier de la même façon
+(ADR 0014).
 
 La Forge est aussi une participante de la saga du Marché (ADR 0013) : elle retire et verse des
 objets à la demande d'un autre module (`forge.withdraw-items`, `forge.deposit-items`), et répond
 avec la même forme que le Village. Le Marché choisit le destinataire de chaque mouvement d'après
 les biens concernés : la Forge pour des objets, le Village pour des ressources. Il ne dépend que
 des contrats de la Forge (`FORGE_TOPICS`, `ItemAmounts`, `RECIPES`), et son écran lit l'inventaire
-par l'interface de la Forge (`readInventory`, dans `forge/ui.tsx`).
+par l'interface de la Forge (`useInventory`, dans `forge/ui.tsx`), qui le tient à jour par le
+canal de l'atelier (ADR 0014).
 
 Chaque module déclare ses données personnelles à la brique `privacy`, au moyen d'un fichier
 `personal-data.ts` : il les exporte, désigne les champs personnels de ses événements, et les
@@ -165,6 +169,25 @@ sequenceDiagram
   F->>F: ForgingStarted, ou OrderFailed
   F-->>J: Vue de l'atelier
 ```
+
+### Annulation d'une fabrication
+
+```mermaid
+sequenceDiagram
+  actor J as Joueur
+  participant F as Forge
+  participant B as Boîte d'envoi
+  participant V as Village
+  J->>F: POST /api/forge/orders/:orderId/cancel
+  F->>B: OrderCancelled + realm.deposit (moitié du coût, même transaction)
+  B->>V: realm.deposit
+  V->>V: ResourcesDeposited
+  F-->>J: Vue de l'atelier
+  F--)J: Annonce sur le canal de l'atelier
+```
+
+Le versement ne peut pas être refusé : aucune réponse n'est attendue. Une commande annulée ne
+peut plus l'être, et le Village ignore un versement déjà reçu : la restitution n'a lieu qu'une fois.
 
 ### Échange d'un objet au Marché
 

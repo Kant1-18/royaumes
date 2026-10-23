@@ -72,7 +72,7 @@ Un module n'est accessible depuis l'extérieur que par ses entrées publiques : 
 | `dungeon` | Donjon : expéditions de un à quatre héros, compagnons pilotés par l'ordinateur, deux niveaux de difficulté, combats en manches simultanées | `/api/dungeon` |
 | `ranking` | Classement des joueurs, construit à partir des événements du Village et du Donjon | `/api/ranking` |
 | `market` | Marché : échanges de ressources et d'objets forgés entre joueurs, par une saga orchestrée | `/api/market` |
-| `forge` | Forge : fabrication d'objets payés par le Village, dans la limite du niveau de la forge du village ; inventaire d'objets échangeables au Marché | `/api/forge` |
+| `forge` | Forge : fabrication d'objets payés par le Village, dans la limite du niveau de la forge du village, et annulation remboursée pour moitié ; inventaire d'objets échangeables au Marché | `/api/forge` |
 | `tavern` | Taverne : salon de discussion commun et présence des joueurs, sans Event Sourcing | `/api/tavern` |
 
 ## Temps réel
@@ -90,12 +90,12 @@ enregistrés après leur ouverture.
 Le canal `tavern` ne lit pas le journal, mais la table des messages de la Taverne : il
 transmet chaque nouveau message, avec son contenu, à tous les joueurs connectés.
 
-Les canaux du Donjon, du Classement et du Marché sont discrets : ils ne transmettent que la position,
-le type et la version des événements, et chaque navigateur relit sa propre vue, filtrée
-par le serveur.
+Les canaux du Donjon, du Classement, du Marché et de la Forge sont discrets : ils ne transmettent
+que la position, le type et la version des événements, et chaque navigateur relit sa propre vue,
+filtrée par le serveur.
 
-La Forge n'a pas encore de canal : son écran n'est mis à jour qu'à chaque action du joueur, et
-à l'échéance d'une fabrication (DT-012).
+Le canal `forge-<joueur>` n'est accessible qu'au propriétaire de l'atelier. L'écran du Marché
+l'écoute aussi, pour tenir à jour la liste des objets que le joueur peut céder (ADR 0014).
 
 Un flux se ferme de lui-même au bout de 240 secondes, et le navigateur s'y reconnecte
 sans perte d'événement. En développement, la variable `STREAM_MAX_SECONDS` permet de
@@ -104,7 +104,7 @@ raccourcir cette durée pour observer la reconnexion.
 ## Échanges entre modules
 
 Une opération qui modifie les données de plusieurs modules, comme un échange du Marché ou le
-paiement d'une commande de la Forge, est une saga (ADR 0007, 0012 et 0013) : chaque étape est une
+paiement d'une commande de la Forge, est une saga (ADR 0007, 0012, 0013 et 0014) : chaque étape est une
 transaction locale à un module, et les modules communiquent par des messages enregistrés dans la
 boîte d'envoi (`platform.outbox`), dans la même transaction que leurs événements. Les messages sont
 distribués après chaque commande et chaque consultation du Marché et de la Forge, et chaque jour
@@ -122,6 +122,9 @@ gestionnaires de messages sont idempotents.
 Le Village et la Forge répondent de la même façon (identifiant du mouvement, issue, quantités
 manquantes) : le Marché adresse chaque mouvement à l'un ou à l'autre selon les biens concernés,
 sans que sa saga change.
+
+La Forge verse aussi des ressources au village par `realm.deposit` : la moitié du coût d'une
+fabrication annulée, ou la totalité du coût d'une commande payée après son délai (ADR 0014).
 
 ## Données personnelles
 
@@ -206,10 +209,10 @@ Une offre échue n'est plus proposée ni acceptée, mais ses ressources ne sont 
 vendeur qu'à la consultation suivante du Marché, ou au plus tard lors de la tâche planifiée
 quotidienne.
 
-Une fabrication payée ne peut pas être annulée (DT-008), et une commande dont le message de
-paiement est abandonné occupe une place de l'atelier jusqu'à sa relance (DT-009). Une offre
-du Marché porte sur un seul type de bien de chaque côté : des ressources ou des objets, jamais
-les deux (ADR 0013).
+Une commande de la Forge dont le paiement reste sans réponse expire au bout de dix minutes : si
+le paiement arrive ensuite, son coût est restitué en entier, mais le joueur doit recommander
+(ADR 0014). Une offre du Marché porte sur un seul type de bien de chaque côté : des ressources
+ou des objets, jamais les deux (ADR 0013).
 
 L'effacement d'un compte parcourt tout le journal d'événements : sa durée croît avec la taille
 du journal. L'identifiant d'un joueur effacé reste dans le journal, sous une forme
