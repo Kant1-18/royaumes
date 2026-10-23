@@ -2,7 +2,7 @@
 import { hc } from 'hono/client'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { RECIPES } from '@/modules/forge/contracts'
-import { readInventory } from '@/modules/forge/ui'
+import { useInventory } from '@/modules/forge/ui'
 import { RESOURCES } from '@/modules/realm/contracts'
 import { useChannel } from '@/platform/realtime/use-channel'
 import { Entity } from '@/ui/entity'
@@ -82,14 +82,15 @@ function outcomeOf(view: OfferView): string {
 }
 
 /** Écran du Marché : publication d'une offre, offres du joueur et offres des autres joueurs. */
-export function MarketScreen() {
+export function MarketScreen({ userId }: { userId: string }) {
   const [list, setList] = useState<MarketList | undefined>(undefined)
   const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null)
   // Formulaire de publication : un bien cédé et un bien demandé.
   const [give, setGive] = useState<Goods>({ good: 'wood', amount: 50 })
   const [want, setWant] = useState<Goods>({ good: 'stone', amount: 25 })
-  // Objets possédés par le joueur, tenus par la Forge : seuls ceux-là peuvent être cédés.
-  const [inventory, setInventory] = useState<Record<string, number>>({})
+  // Objets possédés par le joueur, tenus à jour par la Forge et par son canal temps réel :
+  // seuls ceux-là peuvent être cédés.
+  const { inventory, refresh: refreshInventory } = useInventory(userId)
 
   // REQUÊTE : la consultation distribue la boîte d'envoi, puis rattrape la projection.
   const refresh = useCallback(async () => {
@@ -100,23 +101,14 @@ export function MarketScreen() {
     return body.position
   }, [])
 
-  // L'inventaire est lu par l'interface de la Forge, l'une de ses entrées publiques.
-  const refreshInventory = useCallback(async () => {
-    const inventory = await readInventory()
-    if (inventory) setInventory(inventory)
-  }, [])
-
   useEffect(() => {
     refresh()
-    refreshInventory()
-  }, [refresh, refreshInventory])
+  }, [refresh])
 
   // TEMPS RÉEL : même mécanisme que le Classement (TD8), la liste est relue jusqu'à ce que
   // la projection ait atteint la position de l'événement annoncé.
   const wanted = useRef(0)
   const following = useRef(false)
-  // DETTE TECHNIQUE DT-013 (docs/qualite/dette-technique.md) : le canal n'annonce que les offres ;
-  // l'inventaire d'objets n'est relu qu'au chargement et après une commande du joueur.
   const status = useChannel(MARKET_CHANNEL, async (event) => {
     wanted.current = Math.max(wanted.current, event.position)
     if (following.current) return

@@ -144,6 +144,23 @@ describe('API du module Forge', () => {
     expect((await api.post(`/api/forge/orders/${orderId}/cancel`, {}, null)).status).toBe(401)
   })
 
+  it("réserve le canal de l'atelier à son propriétaire (403)", async () => {
+    const api = await forgeBuilt()
+
+    expect((await api.get('/api/stream/forge-alice')).status).toBe(200)
+    expect((await api.get('/api/stream/forge-alice', 'bob')).status).toBe(403)
+  })
+
+  it('annonce le paiement et la fabrication sur le canal, sans leurs données', async () => {
+    const api = await forgeBuilt()
+    await order(api, 'axe')
+
+    const body = await (await api.get('/api/stream/forge-alice')).text()
+    expect(body).toContain('"type":"OrderPlaced"')
+    expect(body).toContain('"type":"ForgingStarted"')
+    expect(body).not.toContain('wood')
+  })
+
   it("inclut les commandes de l'atelier dans l'export des données du joueur", async () => {
     const api = await forgeBuilt()
     await order(api, 'axe')

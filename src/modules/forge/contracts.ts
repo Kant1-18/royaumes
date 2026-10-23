@@ -11,6 +11,7 @@ export { RECIPE_CATALOG, RECIPES } from './domain/recipes'
 
 export type { OrderView, OrderViewStatus, WorkshopView } from './domain/view'
 export type { Items, WorkshopError } from './domain/workshop'
+export { PAYMENT_TIMEOUT_MS } from './domain/workshop'
 
 /** Corps attendu pour commander un objet : une recette du catalogue. */
 export const PlaceOrderInput = z.object({ recipe: z.enum(RECIPES) })
@@ -47,6 +48,12 @@ export const FORGE_STREAM_PREFIX = 'forge-'
 
 /** Nom du flux qui contient les événements de l'atelier d'un joueur. */
 export const forgeStream = (userId: string) => `${FORGE_STREAM_PREFIX}${userId}`
+
+/**
+ * Nom du canal temps réel de l'atelier d'un joueur : c'est le nom du flux de son atelier.
+ * Le canal est discret, et réservé au propriétaire de l'atelier.
+ */
+export const forgeChannel = forgeStream
 
 /**
  * Sujets des messages adressés à la Forge. Les mouvements d'objets forment son langage

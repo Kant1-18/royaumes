@@ -6,8 +6,10 @@
 import type { Db } from '@/platform/db/client'
 import type { EventStore } from '@/platform/event-store/event-store'
 import type { ProjectionRunner } from '@/platform/projection/projection'
+import type { ChannelPolicy } from '@/platform/realtime/channel-policy'
 import { createForgeApi } from './api'
 import { createForgeService } from './application/forge-service'
+import { FORGE_STREAM_PREFIX, forgeChannel } from './contracts'
 import { createDrizzleCapacityReader } from './infrastructure/drizzle-capacity-reader'
 import { createEventStoreWorkshopRepository } from './infrastructure/event-store-workshop-repository'
 import { createForgeHandlers } from './messages'
@@ -32,8 +34,17 @@ export function createForgeModule({ store, db, projections, dispatch, clock }: F
   const capacities = createDrizzleCapacityReader(db, projections)
   const service = createForgeService(repo, capacities, { dispatch, clock })
 
+  // Le canal d'un atelier n'est accessible qu'à son propriétaire. Il est discret : l'écran
+  // relit sa vue à chaque annonce, et les données des événements ne lui servent pas.
+  const channelPolicy: ChannelPolicy = {
+    prefix: FORGE_STREAM_PREFIX,
+    canSubscribe: (channel, userId) => channel === forgeChannel(userId),
+    redact: true,
+  }
+
   return {
     api: createForgeApi(service),
+    channelPolicy,
     handlers: createForgeHandlers(service),
     personalData: createForgePersonalData(store),
   }

@@ -2,13 +2,16 @@
 import { hc } from 'hono/client'
 import Link from 'next/link'
 import { useCallback, useEffect, useState } from 'react'
+import { useChannel } from '@/platform/realtime/use-channel'
 import { Entity } from '@/ui/entity'
 import { look } from '@/ui/theme'
 import type { ForgeApi } from './api'
 import {
   type Amounts,
+  forgeChannel,
   type OrderView,
   type OrderViewStatus,
+  PAYMENT_TIMEOUT_MS,
   RECIPE_CATALOG,
   RECIPES,
   type Recipe,
@@ -19,15 +22,33 @@ import {
 /** Client HTTP typé, déduit de la sous-application Hono du module. */
 const client = hc<ForgeApi>('/api/forge')
 
+/** Libellé affiché pour chaque état de la connexion temps réel. */
+const STATUS_LABELS = {
+  connecting: 'Connexion...',
+  open: 'Temps réel connecté',
+  reconnecting: 'Reconnexion...',
+} as const
+
 /**
- * Inventaire d'objets du joueur connecté, par recette ; null si la Forge ne répond pas.
- * C'est la lecture offerte aux écrans des autres modules, comme le Marché : la route et
- * le client de la Forge restent ainsi l'affaire de la Forge.
+ * Inventaire d'objets d'un joueur, par recette, tenu à jour par le canal de son atelier.
+ * C'est la lecture offerte aux écrans des autres modules, comme le Marché : la route, le
+ * client et le canal de la Forge restent ainsi l'affaire de la Forge. La fonction renvoyée
+ * relit l'inventaire, par exemple après un échange.
  */
-export async function readInventory(): Promise<Record<Recipe, number> | null> {
-  const res = await client.index.$get()
-  if (!res.ok) return null
-  return (await res.json()).view.inventory
+export function useInventory(userId: string) {
+  const [inventory, setInventory] = useState<Record<string, number>>({})
+
+  const refresh = useCallback(async () => {
+    const res = await client.index.$get()
+    if (res.ok) setInventory((await res.json()).view.inventory)
+  }, [])
+
+  useEffect(() => {
+    refresh()
+  }, [refresh])
+  useChannel(forgeChannel(userId), refresh)
+
+  return { inventory, refresh }
 }
 
 /** Libellé de chaque état d'une commande. */
@@ -96,33 +117,46 @@ function outcomeOf(order: OrderView): string {
 }
 
 /** Écran de la Forge : recettes, commandes en cours, inventaire et historique de l'atelier. */
-export function ForgeScreen() {
+export function ForgeScreen({ userId }: { userId: string }) {
   const [view, setView] = useState<WorkshopView | undefined>(undefined)
-  const [now, setNow] = useState(() => Date.now())
+  // Écart entre l'horloge du serveur et celle du navigateur, mesuré à chaque vue reçue :
+  // les échéances, fixées par le serveur, sont comparées à l'heure du serveur.
+  const [offset, setOffset] = useState(0)
+  const [tick, setTick] = useState(() => Date.now())
   const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null)
+  const now = tick + offset
+
+  const show = useCallback((next: WorkshopView) => {
+    setView(next)
+    setOffset(next.asOf - Date.now())
+  }, [])
 
   // REQUÊTE : la consultation distribue la boîte d'envoi, puis renvoie la vue de l'atelier.
   const refresh = useCallback(async () => {
     const res = await client.index.$get()
-    if (res.ok) setView((await res.json()).view)
-  }, [])
+    if (res.ok) show((await res.json()).view)
+  }, [show])
 
   useEffect(() => {
     refresh()
   }, [refresh])
 
+  // TEMPS RÉEL : chaque événement de l'atelier (paiement, annulation, objet échangé au
+  // Marché, action d'un autre onglet) est annoncé par le canal, et la vue est relue.
+  const status = useChannel(forgeChannel(userId), refresh)
+
   // Le temps restant est recalculé chaque seconde, sans interroger le serveur.
   useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1_000)
+    const timer = setInterval(() => setTick(Date.now()), 1_000)
     return () => clearInterval(timer)
   }, [])
 
-  // Une fabrication qui atteint son échéance est relue, pour mettre à jour l'inventaire.
-  // DETTE TECHNIQUE DT-012 (docs/qualite/dette-technique.md) : sans canal temps réel, un
-  // paiement en attente, un objet échangé au Marché ou une action d'un autre onglet
-  // n'apparaît qu'au rechargement.
+  // Une échéance atteinte ne produit aucun événement : la fin d'une fabrication, ou d'un
+  // délai de paiement, est relue par l'écran lui-même.
   const due = view?.orders.some(
-    (order) => order.status === 'forging' && order.readyAt !== null && now >= order.readyAt,
+    (order) =>
+      (order.status === 'forging' && order.readyAt !== null && now >= order.readyAt) ||
+      (order.status === 'paying' && now >= order.placedAt + PAYMENT_TIMEOUT_MS),
   )
   useEffect(() => {
     if (due) refresh()
@@ -137,7 +171,7 @@ export function ForgeScreen() {
       setMessage({ text: ERRORS[body.error.code] ?? 'Erreur.', error: true })
       return
     }
-    setView(body.view)
+    show(body.view)
     const order = body.view.orders.find((o) => o.orderId === body.orderId)
     if (order) setMessage({ text: outcomeOf(order), error: order.status === 'failed' })
   }
@@ -151,11 +185,16 @@ export function ForgeScreen() {
       <h1>
         <Entity kind="forge" /> Forge
       </h1>
-      {view && view.capacity > 0 && (
-        <span className="muted">
-          Atelier : {view.busy} / {view.capacity}
+      <span className="row">
+        {view && view.capacity > 0 && (
+          <span className="muted">
+            Atelier : {view.busy} / {view.capacity}
+          </span>
+        )}
+        <span className="status" data-status={status}>
+          {STATUS_LABELS[status]}
         </span>
-      )}
+      </span>
     </div>
   )
 
