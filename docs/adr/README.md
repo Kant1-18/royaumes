@@ -17,3 +17,4 @@ un nouvel ADR est rédigé et l'ancien prend le statut « remplacé ».
 | [0010](0010-forge-stockage.md) | La forge, bâtiment du Village, et la capacité des ateliers tenue par une projection | Accepté |
 | [0011](0011-forge-commandes.md) | Journal d'événements pour les commandes de la Forge, un flux par atelier | Accepté |
 | [0012](0012-forge-communication.md) | Paiement des commandes de la Forge par une saga orchestrée avec le Village | Accepté |
+| [0013](0013-forge-marche.md) | Échange des objets de la Forge au Marché, la Forge participant à la saga d'échange | Accepté |
