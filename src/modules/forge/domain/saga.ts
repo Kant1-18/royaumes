@@ -37,5 +37,11 @@ export function requestsFor(state: WorkshopState, event: WorkshopEvent): SagaReq
     // Refus du paiement : rien n'a été prélevé, rien n'est à compenser.
     case 'OrderFailed':
       return []
+
+    // Mouvements d'objets demandés par un autre module : la réponse est l'affaire du service.
+    case 'ItemsWithdrawn':
+    case 'ItemWithdrawalRefused':
+    case 'ItemsDeposited':
+      return []
   }
 }

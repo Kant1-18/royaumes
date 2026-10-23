@@ -4,7 +4,8 @@ import { forgeStream } from './contracts'
 import { replay, type WorkshopEvent } from './domain/workshop'
 
 /**
- * Données personnelles de la Forge : les commandes du joueur, rattachées à son identifiant.
+ * Données personnelles de la Forge : les commandes du joueur et les mouvements d'objets de
+ * son inventaire, rattachés à son identifiant.
  * Les événements de l'atelier ne contiennent ni nom ni texte libre : aucun n'est à réécrire.
  */
 export function createForgePersonalData(store: EventStore): PersonalDataContributor {
@@ -25,6 +26,10 @@ export function createForgePersonalData(store: EventStore): PersonalDataContribu
             readyAt,
           }),
         ),
+        transfers: Object.entries(state.transfers).map(([transferId, transfer]) => ({
+          transferId,
+          ...transfer,
+        })),
       }
     },
   }

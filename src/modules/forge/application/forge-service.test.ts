@@ -20,18 +20,22 @@ let withdrawals: TransferRequest[]
 let repo: WorkshopRepository
 let service: ForgeService
 let handlers: Record<string, MessageHandler>
+let dispatch: () => Promise<unknown>
+let replies: Record<string, unknown>[]
 
 beforeEach(async () => {
   now = T0
   capacity = 1
   stock = { wood: 100, stone: 100, gold: 0 }
   withdrawals = []
+  replies = []
 
   const db = await createTestDatabase()
   repo = createEventStoreWorkshopRepository(createEventStore(db))
   // Le distributeur compare la disponibilité des messages, fixée par la base en heure
   // réelle, à sa propre horloge : il garde donc l'heure réelle.
   const dispatcher = createDispatcher(db)
+  dispatch = () => dispatcher.dispatch()
   let ids = 0
   service = createForgeService(
     repo,
@@ -64,6 +68,12 @@ beforeEach(async () => {
     })
   }
   dispatcher.register({ [REALM_TOPICS.withdraw]: village, ...handlers })
+  // Demandeur simulé des mouvements d'objets : il retient les réponses de la Forge.
+  dispatcher.register({
+    'demandeur.reponse': async (message) => {
+      replies.push(message.payload)
+    },
+  })
 })
 
 describe('Service de la Forge', () => {
@@ -150,5 +160,32 @@ describe('Service de la Forge', () => {
         payload: { transferId: 'o1:reserve', outcome: 'withdrawn' },
       }),
     ).rejects.toThrow('Mouvement étranger à la Forge')
+  })
+
+  it("répond au demandeur d'un mouvement d'objets, une seule fois", async () => {
+    const deposit = { type: 'DepositItems', transferId: 'm1', items: { axe: 1 } } as const
+    const withdraw = { type: 'WithdrawItems', transferId: 'm2', items: { axe: 2 } } as const
+    await service.transfer('bob', deposit, 'demandeur.reponse')
+    await service.transfer('bob', withdraw, 'demandeur.reponse')
+    // Le versement est reçu une seconde fois : ni événement, ni réponse.
+    await service.transfer('bob', deposit, 'demandeur.reponse')
+    await dispatch()
+
+    // Deux réponses exactement, dont l'ordre de remise n'est pas garanti.
+    expect(replies).toHaveLength(2)
+    expect(replies).toContainEqual({ transferId: 'm1', outcome: 'deposited' })
+    expect(replies).toContainEqual({ transferId: 'm2', outcome: 'refused', missing: { axe: 1 } })
+    expect((await service.getView('bob')).inventory.axe).toBe(1)
+  })
+
+  it("lève une erreur pour un mouvement d'objets mal formé", async () => {
+    await expect(
+      handlers['forge.withdraw-items']({
+        id: 'mal-forme',
+        topic: 'forge.withdraw-items',
+        attempt: 1,
+        payload: { transferId: 'm1', playerId: 'bob', items: { catapult: 1 } },
+      }),
+    ).rejects.toThrow()
   })
 })

@@ -195,3 +195,56 @@ describe('Forge - conservation des ressources', () => {
     expect(view.busy).toBe(1)
   })
 })
+
+describe("Forge - mouvements d'objets", () => {
+  const withdraw = (transferId: string, axe: number): WorkshopCommand => ({
+    type: 'WithdrawItems',
+    transferId,
+    items: { axe },
+  })
+  const deposit = (transferId: string, axe: number): WorkshopCommand => ({
+    type: 'DepositItems',
+    transferId,
+    items: { axe },
+  })
+  // Une hache forgée : payée à T0, elle est prête à T0 + 2 minutes.
+  const READY = T0 + minutes(2)
+
+  it("retire un objet forgé de l'inventaire", () => {
+    const { state, events } = play(forging, withdraw('t1', 1), READY)
+    expect(events).toEqual([
+      { type: 'ItemsWithdrawn', data: { transferId: 't1', items: { axe: 1 }, at: READY } },
+    ])
+    expect(toView(state, 1, READY).inventory.axe).toBe(0)
+  })
+
+  it("refuse le retrait d'un objet absent ou encore en fabrication", () => {
+    expect(decide(forging, withdraw('t1', 1), READY - 1)).toEqual({
+      ok: true,
+      events: [
+        {
+          type: 'ItemWithdrawalRefused',
+          data: { transferId: 't1', missing: { axe: 1 }, at: READY - 1 },
+        },
+      ],
+    })
+    const { state } = play(forging, withdraw('t1', 3), READY)
+    expect(state.transfers.t1).toMatchObject({ outcome: 'refused', items: {} })
+    expect(toView(state, 1, READY).inventory.axe).toBe(1)
+  })
+
+  it("verse des objets à l'inventaire, même sans aucune commande", () => {
+    const { state } = play(initialState, deposit('t1', 2))
+    expect(toView(state, 0, T0).inventory.axe).toBe(2)
+    expect(play(state, withdraw('t2', 2)).state.transfers.t2.outcome).toBe('withdrawn')
+  })
+
+  it('ignore un retrait ou un versement reçu en double', () => {
+    const withdrawn = play(forging, withdraw('t1', 1), READY).state
+    expect(decide(withdrawn, withdraw('t1', 1), READY)).toEqual({ ok: true, events: [] })
+
+    const deposited = play(initialState, deposit('t2', 1)).state
+    expect(decide(deposited, deposit('t2', 1), T0)).toEqual({ ok: true, events: [] })
+    expect(toView(deposited, 0, T0).inventory.axe).toBe(1)
+  })
+})

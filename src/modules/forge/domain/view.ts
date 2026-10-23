@@ -1,6 +1,13 @@
 /** Vue de l'atelier : ce que son propriétaire en voit à un instant donné. */
-import { RECIPES, type Recipe } from './recipes'
-import { isActive, isForged, type Order, type OrderStatus, type WorkshopState } from './workshop'
+import type { Recipe } from './recipes'
+import {
+  inventoryAt,
+  isActive,
+  isForged,
+  type Order,
+  type OrderStatus,
+  type WorkshopState,
+} from './workshop'
 
 /** État d'une commande présenté au joueur : l'état enregistré, ou « forgé » après l'échéance. */
 export type OrderViewStatus = OrderStatus | 'forged'
@@ -17,7 +24,7 @@ export interface WorkshopView {
   // présenté, sans pagination.
   orders: OrderView[]
 
-  /** Nombre d'objets forgés, par recette. */
+  /** Nombre d'objets possédés, par recette : forgés, reçus ou cédés au Marché. */
   inventory: Record<Recipe, number>
   /** Instant auquel la vue a été calculée. */
   asOf: number
@@ -25,11 +32,6 @@ export interface WorkshopView {
 
 export function toView(state: WorkshopState, capacity: number, now: number): WorkshopView {
   const orders = Object.values(state.orders).sort((a, b) => b.placedAt - a.placedAt)
-  const inventory = Object.fromEntries(RECIPES.map((recipe) => [recipe, 0])) as Record<
-    Recipe,
-    number
-  >
-  for (const order of orders) if (isForged(order, now)) inventory[order.recipe] += 1
 
   return {
     capacity,
@@ -38,7 +40,7 @@ export function toView(state: WorkshopState, capacity: number, now: number): Wor
       ...order,
       status: isForged(order, now) ? 'forged' : order.status,
     })),
-    inventory,
+    inventory: inventoryAt(state, now),
     asOf: now,
   }
 }

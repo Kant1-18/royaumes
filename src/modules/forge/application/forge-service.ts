@@ -7,6 +7,7 @@ import { toView, type WorkshopView } from '../domain/view'
 import {
   decide,
   evolve,
+  type ItemTransferCommand,
   type WorkshopCommand,
   type WorkshopError,
   type WorkshopEvent,
@@ -40,6 +41,20 @@ function toMessage(request: SagaRequest): NewMessage {
       // Adresse de retour : la réponse du Village fera progresser la saga.
       replyTo: FORGE_TOPICS.transferResult,
     },
+  }
+}
+
+/** Réponse à un mouvement d'objets, de même forme que celle du Village ; null pour un autre événement. */
+function replyOf(event: WorkshopEvent): Record<string, unknown> | null {
+  switch (event.type) {
+    case 'ItemsWithdrawn':
+      return { transferId: event.data.transferId, outcome: 'withdrawn' }
+    case 'ItemWithdrawalRefused':
+      return { transferId: event.data.transferId, outcome: 'refused', missing: event.data.missing }
+    case 'ItemsDeposited':
+      return { transferId: event.data.transferId, outcome: 'deposited' }
+    default:
+      return null
   }
 }
 
@@ -125,7 +140,28 @@ export function createForgeService(
     if (!decision.ok) throw new Error(`Atelier ${playerId} : ${decision.error.code}`)
   }
 
-  return { placeOrder, getView, step }
+  /**
+   * Traite un mouvement d'objets demandé par un autre module. La réponse éventuelle est
+   * enregistrée dans la boîte d'envoi, au sujet replyTo, dans la même transaction que
+   * l'événement du mouvement. Un mouvement déjà traité ne produit ni événement ni réponse.
+   */
+  function transfer(playerId: string, command: ItemTransferCommand, replyTo?: string) {
+    return withOptimisticRetry(async () => {
+      const { state, version } = await repo.load(playerId)
+      const decision = decide(state, command, clock())
+      if (!decision.ok) {
+        throw new Error(`Mouvement ${command.transferId} impossible : ${decision.error.code}`)
+      }
+      const messages: NewMessage[] = []
+      for (const event of decision.events) {
+        const reply = replyOf(event)
+        if (reply && replyTo) messages.push({ topic: replyTo, payload: reply })
+      }
+      await repo.save(playerId, version, decision.events, messages)
+    })
+  }
+
+  return { placeOrder, getView, step, transfer }
 }
 
 /** Type du service, déduit de sa fabrique. */
