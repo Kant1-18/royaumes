@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { MarketList, OfferView } from '@/modules/market/contracts'
+import type { WorkshopView } from '@/modules/forge/contracts'
+import type { Amounts, MarketList, OfferView } from '@/modules/market/contracts'
 import type { Stock } from '@/modules/realm/contracts'
 import { createTestApi } from './testing'
 
@@ -24,8 +25,32 @@ async function stockOf(api: TestApi, player: string): Promise<Stock> {
   return ((await res.json()) as { view: { stock: Stock } }).view.stock
 }
 
+/** Inventaire des objets d'un joueur, tenu par la Forge. */
+async function inventoryOf(api: TestApi, player: string) {
+  const res = await api.get('/api/forge', player)
+  return ((await res.json()) as { view: WorkshopView }).view.inventory
+}
+
+/**
+ * Application de test où Alice possède une hache : elle a construit sa forge au bout de
+ * 25 minutes, puis y a fait forger une hache, prête deux minutes plus tard. Bob a fondé
+ * son village en même temps qu'elle.
+ */
+async function axeForged({ villageService = false } = {}) {
+  const api = await createTestApi({ villageService })
+  for (const player of ['alice', 'bob']) {
+    await api.post('/api/realm/village', { name: `Village de ${player}` }, player)
+  }
+  api.advance(25)
+  await api.post('/api/realm/village/upgrade', { building: 'forge' })
+  api.advance(10)
+  await api.post('/api/forge/orders', { recipe: 'axe' })
+  api.advance(2)
+  return api
+}
+
 /** Publie au nom d'Alice l'offre « 60 bois contre 30 pierre », ou une autre offre. */
-async function publish(api: TestApi, give = { wood: 60 }, want = { stone: 30 }) {
+async function publish(api: TestApi, give: Amounts = { wood: 60 }, want: Amounts = { stone: 30 }) {
   const res = await api.post('/api/market/offers', { give, want }, 'alice')
   return (await res.json()) as { offerId: string; view: OfferView }
 }
@@ -132,5 +157,65 @@ describe('API du module Marché', () => {
     expect(forAlice.offers).toMatchObject([{ offerId, mine: true, status: 'open' }])
     const forBob = (await (await api.get('/api/market/offers', 'bob')).json()) as MarketList
     expect(forBob.offers).toMatchObject([{ offerId, mine: false, sellerName: 'alice' }])
+  })
+})
+
+describe("API du module Marché - échange d'objets de la Forge", () => {
+  // La saga du Marché s'adresse à la Forge et au Village par la boîte d'envoi :
+  // l'échange doit aboutir de la même façon lorsque le Village est un service extrait.
+  for (const villageService of [false, true]) {
+    it(`échange une hache contre de la pierre (Village extrait : ${villageService})`, async () => {
+      const api = await axeForged({ villageService })
+      const { offerId, view } = await publish(api, { axe: 1 }, { stone: 30 })
+
+      // La hache est en séquestre : elle a quitté l'inventaire d'Alice.
+      expect(view.status).toBe('open')
+      expect((await inventoryOf(api, 'alice')).axe).toBe(0)
+
+      const alice = await stockOf(api, 'alice')
+      const bob = await stockOf(api, 'bob')
+      const res = await accept(api, offerId, 'bob')
+      expect(((await res.json()) as { view: OfferView }).view.status).toBe('completed')
+      expect((await inventoryOf(api, 'bob')).axe).toBe(1)
+      expect((await stockOf(api, 'alice')).stone).toBe(alice.stone + 30)
+      expect((await stockOf(api, 'bob')).stone).toBe(bob.stone - 30)
+    })
+  }
+
+  it("fait payer un objet à l'acheteur", async () => {
+    const api = await axeForged()
+    const res = await api.post(
+      '/api/market/offers',
+      { give: { stone: 30 }, want: { axe: 1 } },
+      'bob',
+    )
+    const { offerId } = (await res.json()) as { offerId: string }
+
+    await accept(api, offerId, 'alice')
+    expect((await inventoryOf(api, 'alice')).axe).toBe(0)
+    expect((await inventoryOf(api, 'bob')).axe).toBe(1)
+  })
+
+  it("restitue l'objet au vendeur qui retire son offre", async () => {
+    const api = await axeForged()
+    const { offerId } = await publish(api, { axe: 1 }, { stone: 30 })
+
+    await api.post(`/api/market/offers/${offerId}/withdraw`, {}, 'alice')
+    expect((await inventoryOf(api, 'alice')).axe).toBe(1)
+  })
+
+  it("refuse l'offre d'un objet que le vendeur ne possède pas", async () => {
+    const api = await axeForged()
+    const { view } = await publish(api, { sword: 1 }, { stone: 30 })
+    expect(view.status).toBe('rejected')
+  })
+
+  it('refuse un côté qui mêle ressources et objets (400)', async () => {
+    const api = await axeForged()
+    const res = await api.post('/api/market/offers', {
+      give: { axe: 1, wood: 5 },
+      want: { stone: 30 },
+    })
+    expect(res.status).toBe(400)
   })
 })

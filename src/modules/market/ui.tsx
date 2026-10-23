@@ -1,7 +1,8 @@
 'use client'
 import { hc } from 'hono/client'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { RESOURCES, type Resource } from '@/modules/realm/contracts'
+import { RECIPES, type WorkshopView } from '@/modules/forge/contracts'
+import { RESOURCES } from '@/modules/realm/contracts'
 import { useChannel } from '@/platform/realtime/use-channel'
 import { Entity } from '@/ui/entity'
 import { look } from '@/ui/theme'
@@ -47,18 +48,21 @@ const ERRORS: Record<OfferError['code'] | 'INVALID_INPUT', string> = {
   NOT_EXPIRED: "L'offre n'a pas expiré.",
 }
 
+/** Biens d'un côté de l'offre : une ressource du Village, ou un objet de la Forge. */
+type Goods = { good: string; amount: number }
+
 /** Délai entre deux relectures, et nombre maximal de relectures, comme pour le Classement. */
 const RETRY_MS = 1_000
 const MAX_READS = 10
 
-/** Affiche des quantités de ressources : « 60 bois, 30 pierre ». */
+/** Affiche des quantités de biens : « 60 bois, 30 pierre » ou « 1 hache ». */
 function AmountsText({ amounts }: { amounts: Amounts }) {
   return (
     <>
-      {Object.entries(amounts).map(([resource, amount], index) => (
-        <span key={resource}>
+      {Object.entries(amounts).map(([good, amount], index) => (
+        <span key={good}>
           {index > 0 && ', '}
-          {amount} <Entity kind={resource} />
+          {amount} <Entity kind={good} />
         </span>
       ))}
     </>
@@ -80,15 +84,11 @@ function outcomeOf(view: OfferView): string {
 export function MarketScreen() {
   const [list, setList] = useState<MarketList | undefined>(undefined)
   const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null)
-  // Formulaire de publication : une ressource cédée et une ressource demandée.
-  const [give, setGive] = useState<{ resource: Resource; amount: number }>({
-    resource: 'wood',
-    amount: 50,
-  })
-  const [want, setWant] = useState<{ resource: Resource; amount: number }>({
-    resource: 'stone',
-    amount: 25,
-  })
+  // Formulaire de publication : un bien cédé et un bien demandé.
+  const [give, setGive] = useState<Goods>({ good: 'wood', amount: 50 })
+  const [want, setWant] = useState<Goods>({ good: 'stone', amount: 25 })
+  // Objets possédés par le joueur, tenus par la Forge : seuls ceux-là peuvent être cédés.
+  const [inventory, setInventory] = useState<Record<string, number>>({})
 
   // REQUÊTE : la consultation distribue la boîte d'envoi, puis rattrape la projection.
   const refresh = useCallback(async () => {
@@ -99,9 +99,19 @@ export function MarketScreen() {
     return body.position
   }, [])
 
+  // La Forge n'expose pas de client typé au Marché : son API n'est pas une entrée publique.
+  // La vue de l'atelier est lue par une simple requête, et typée par le contrat de la Forge.
+  const refreshInventory = useCallback(async () => {
+    const res = await fetch('/api/forge')
+    if (!res.ok) return
+    const { view } = (await res.json()) as { view: WorkshopView }
+    setInventory(view.inventory)
+  }, [])
+
   useEffect(() => {
     refresh()
-  }, [refresh])
+    refreshInventory()
+  }, [refresh, refreshInventory])
 
   // TEMPS RÉEL : même mécanisme que le Classement (TD8), la liste est relue jusqu'à ce que
   // la projection ait atteint la position de l'événement annoncé.
@@ -129,13 +139,13 @@ export function MarketScreen() {
     } else {
       setMessage({ text: outcomeOf(body.view), error: body.view.status === 'rejected' })
     }
-    await refresh()
+    await Promise.all([refresh(), refreshInventory()])
   }
 
   const publish = async () =>
     handle(
       await client.offers.$post({
-        json: { give: { [give.resource]: give.amount }, want: { [want.resource]: want.amount } },
+        json: { give: { [give.good]: give.amount }, want: { [want.good]: want.amount } },
       }),
     )
   const acceptOffer = async (id: string) =>
@@ -146,11 +156,21 @@ export function MarketScreen() {
   const mine = list?.offers.filter((offer) => offer.mine) ?? []
   const others = list?.offers.filter((offer) => !offer.mine) ?? []
 
-  /** Sélecteur d'une ressource et de sa quantité. */
+  // Biens proposés : toutes les ressources, puis les objets. Côté cédé, seuls les objets
+  // en stock sont proposés, avec leur quantité.
+  const items = RECIPES.filter((recipe) => (inventory[recipe] ?? 0) > 0)
+  const giveOptions = [...RESOURCES, ...items]
+  const wantOptions = [...RESOURCES, ...RECIPES]
+  const optionLabel = (good: string) =>
+    good in inventory ? `${look(good).label} (${inventory[good]} en stock)` : look(good).label
+
+  /** Sélecteur d'un bien et de sa quantité. */
   const picker = (
     label: string,
-    value: { resource: Resource; amount: number },
-    onChange: (value: { resource: Resource; amount: number }) => void,
+    options: readonly string[],
+    value: Goods,
+    onChange: (value: Goods) => void,
+    describe: (good: string) => string,
   ) => (
     <>
       <label htmlFor={`${label}-amount`}>{label}</label>
@@ -163,13 +183,13 @@ export function MarketScreen() {
         onChange={(e) => onChange({ ...value, amount: Number(e.target.value) })}
       />
       <select
-        aria-label={`Ressource : ${label}`}
-        value={value.resource}
-        onChange={(e) => onChange({ ...value, resource: e.target.value as Resource })}
+        aria-label={`Bien : ${label}`}
+        value={value.good}
+        onChange={(e) => onChange({ ...value, good: e.target.value })}
       >
-        {RESOURCES.map((resource) => (
-          <option key={resource} value={resource}>
-            {look(resource).label}
+        {options.map((good) => (
+          <option key={good} value={good}>
+            {describe(good)}
           </option>
         ))}
       </select>
@@ -188,8 +208,8 @@ export function MarketScreen() {
       </div>
 
       <div className="panel row">
-        {picker('Je cède', give, setGive)}
-        {picker('contre', want, setWant)}
+        {picker('Je cède', giveOptions, give, setGive, optionLabel)}
+        {picker('contre', wantOptions, want, setWant, (good) => look(good).label)}
         <button type="button" onClick={publish}>
           Publier l'offre
         </button>

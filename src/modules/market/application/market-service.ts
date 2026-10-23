@@ -1,3 +1,4 @@
+import { FORGE_TOPICS, RECIPES } from '@/modules/forge/contracts'
 import { REALM_TOPICS } from '@/modules/realm/contracts'
 import { withOptimisticRetry } from '@/platform/event-store/retry'
 import type { NewMessage } from '@/platform/outbox/outbox'
@@ -34,29 +35,46 @@ export interface MarketServiceOptions {
   newId?: () => string
 }
 
+/** Vrai si les biens sont des objets de la Forge ; sinon, ce sont des ressources du Village. */
+const isItems = (goods: Amounts) =>
+  Object.keys(goods).every((key) => (RECIPES as readonly string[]).includes(key))
+
+/**
+ * Destinataire d'un mouvement de biens : la Forge pour des objets, le Village pour des
+ * ressources. Les deux répondent de la même façon, la saga ne fait donc aucune différence.
+ */
+function transfer(kind: 'withdraw' | 'deposit', goods: Amounts) {
+  if (isItems(goods)) {
+    const topic = kind === 'withdraw' ? FORGE_TOPICS.withdrawItems : FORGE_TOPICS.depositItems
+    return { topic, goods: { items: goods } }
+  }
+  const topic = kind === 'withdraw' ? REALM_TOPICS.withdraw : REALM_TOPICS.deposit
+  return { topic, goods: { resources: goods } }
+}
+
 /** Traduit une demande de la saga en message de la boîte d'envoi. */
 function toMessage(request: SagaRequest, now: number): NewMessage {
   switch (request.kind) {
-    case 'withdraw':
+    case 'withdraw': {
+      const { topic, goods } = transfer('withdraw', request.resources)
       return {
-        topic: REALM_TOPICS.withdraw,
+        topic,
         payload: {
           transferId: request.transferId,
           playerId: request.playerId,
-          resources: request.resources,
-          // Adresse de retour : la réponse du Village fera progresser la saga.
+          ...goods,
+          // Adresse de retour : la réponse du Village, ou de la Forge, fera progresser la saga.
           replyTo: MARKET_TOPICS.transferResult,
         },
       }
-    case 'deposit':
+    }
+    case 'deposit': {
+      const { topic, goods } = transfer('deposit', request.resources)
       return {
-        topic: REALM_TOPICS.deposit,
-        payload: {
-          transferId: request.transferId,
-          playerId: request.playerId,
-          resources: request.resources,
-        },
+        topic,
+        payload: { transferId: request.transferId, playerId: request.playerId, ...goods },
       }
+    }
     case 'expire':
       return {
         topic: MARKET_TOPICS.expire,

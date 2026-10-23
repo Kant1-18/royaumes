@@ -3,6 +3,7 @@
  * comme par l'interface.
  */
 import { z } from 'zod'
+import { ItemAmounts } from '@/modules/forge/contracts'
 import { ResourceAmounts } from '@/modules/realm/contracts'
 import type { Amounts } from './domain/offer'
 
@@ -10,8 +11,14 @@ export type { Amounts, OfferError, OfferStatus } from './domain/offer'
 export { OFFER_TTL_MS } from './domain/offer'
 export type { OfferView } from './domain/view'
 
-/** Corps attendu pour publier une offre : les ressources cédées, et celles demandées. */
-export const PublishOfferInput = z.object({ give: ResourceAmounts, want: ResourceAmounts })
+/**
+ * Biens d'un côté de l'offre : des ressources du Village, ou des objets de la Forge,
+ * jamais les deux à la fois.
+ */
+const Goods = z.union([ResourceAmounts, ItemAmounts])
+
+/** Corps attendu pour publier une offre : les biens cédés, et ceux demandés. */
+export const PublishOfferInput = z.object({ give: Goods, want: Goods })
 
 /** Offre telle que la présente la liste du Marché. */
 export interface OfferSummary {
