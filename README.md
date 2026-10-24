@@ -184,6 +184,9 @@ sans la première ; sans la seconde, la route des tâches quotidiennes reste fer
 - [Revue de sécurité de la Forge](docs/qualite/revue-securite-forge.md)
 - [Registre des traitements](docs/rgpd/registre-traitements.md)
 - [Revue de conformité au RGPD](docs/rgpd/revue-conformite.md)
+- [Bilan technique](docs/bilan-technique.md)
+- [Fiche de cadrage de l'évaluation](docs/evaluation/fiche-cadrage.md)
+- [Rendu de l'évaluation](docs/evaluation/rendu.md)
 
 ## Conventions
 
