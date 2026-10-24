@@ -39,11 +39,15 @@ aucune n'est obligatoire. Pour définir vos propres valeurs, copiez ce fichier e
 | `pnpm lint:archi` | Vérification des règles d'architecture (dependency-cruiser) |
 | `pnpm typecheck` | Vérification des types (TypeScript) |
 | `pnpm test` | Exécution des tests (Vitest) |
+| `pnpm test:coverage` | Exécution des tests et mesure de la couverture (rapport dans `coverage/`) |
 | `pnpm verify` | Ensemble des contrôles, à exécuter avant toute publication |
 | `pnpm db:generate --name <nom>` | Production d'une migration après la modification d'un fichier `schema.ts` |
 | `pnpm exec tsx scripts/simulate-dungeon.ts` | Mesure de l'équilibre du Donjon par la simulation d'expéditions |
 | `pnpm db:migrate` | Application des migrations à la base désignée par `DATABASE_URL_UNPOOLED` ou `DATABASE_URL` |
 | `pnpm vercel-build` | Construction exécutée par Vercel : contrôles, migrations, puis construction |
+| `pnpm exec tsx scripts/load-test.ts <étiquette>` | Test de charge, application de production démarrée ; résultats dans `perf/<étiquette>.json` |
+| `pnpm exec tsx scripts/dead-letters.ts` | Liste des messages abandonnés de la boîte d'envoi ; `retry <id>` en relance un |
+| `SERVICE_SECRET=<secret> pnpm exec tsx scripts/village-service.ts` | Démarrage du service Village extrait, sur le port 4000 |
 
 ## Architecture
 
@@ -52,14 +56,18 @@ app/                  Pages et route unique de l'API (Next.js)
 src/
   platform/           Plateforme technique, générique
   modules/            Modules métier, un répertoire par contexte délimité
-  bootstrap/          Racine de composition
+  bootstrap/          Racine de composition de l'application
+  services/           Racines de composition des services extraits
   ui/                 Thème et composants d'interface partagés
-scripts/              Scripts d'exploitation (migrations)
+scripts/              Scripts d'exploitation, de mesure et de démarrage du service extrait
 drizzle/              Migrations de la base de données
+perf/                 Budget de performance et résultats des tests de charge
 docs/
   adr/                Décisions d'architecture
   qualite/            Dette technique et revues
+  rgpd/               Registre des traitements et revue de conformité
   architecture.md     Description de l'architecture (modèle C4)
+  bilan-technique.md  Bilan technique du projet
 ```
 
 Un module n'est accessible depuis l'extérieur que par ses entrées publiques : `index.ts`
@@ -109,7 +117,9 @@ transaction locale à un module, et les modules communiquent par des messages en
 boîte d'envoi (`platform.outbox`), dans la même transaction que leurs événements. Les messages sont
 distribués après chaque commande et chaque consultation du Marché et de la Forge, et chaque jour
 par la tâche planifiée `/api/cron/daily`. Leur livraison est garantie au moins une fois : les
-gestionnaires de messages sont idempotents.
+gestionnaires de messages sont idempotents. Un message qui échoue dix fois est abandonné : la
+tâche quotidienne le signale, et le script `scripts/dead-letters.ts` permet de l'examiner, puis
+de le relancer une fois sa cause corrigée.
 
 | Sujet | Destinataire | Rôle |
 | --- | --- | --- |
@@ -125,6 +135,20 @@ sans que sa saga change.
 
 La Forge verse aussi des ressources au village par `realm.deposit` : la moitié du coût d'une
 fabrication annulée, ou la totalité du coût d'une commande payée après son délai (ADR 0014).
+
+## Service Village extrait
+
+Le module Village peut s'exécuter dans un service autonome, avec sa propre base (ADR 0009).
+Cette configuration sert à vérifier les frontières du module ; elle n'est pas déployée. En
+local, démarrez le service, puis l'application, dans deux terminaux, avec le même secret :
+
+```bash
+SERVICE_SECRET=<secret> pnpm exec tsx scripts/village-service.ts
+REALM_SERVICE_URL=http://localhost:4000 SERVICE_SECRET=<secret> pnpm dev
+```
+
+Le service conserve ses données dans `.data/village`. Sans ces deux variables, le Village
+s'exécute dans l'application, comme en production.
 
 ## Données personnelles
 
@@ -161,6 +185,14 @@ une modification qui change le contenu de ses tables doit donc augmenter sa vers
 
 En production, la base est hébergée par Neon. Les migrations y sont appliquées lors de
 chaque déploiement, après les contrôles et avant la construction de l'application.
+
+## Performance
+
+Le script `scripts/load-test.ts` mesure le débit et les latences des principales lectures,
+sous une charge de vingt connexions simultanées, et confronte les résultats au budget de
+performance de `perf/budget.json` : 99 % des lectures servies en moins de 500 ms, sans
+erreur. Il est exécuté sur la construction de production, base recréée, avec
+`AUTH_RATE_LIMIT=off`, avant chaque publication qui touche aux performances.
 
 ## Déploiement
 
@@ -220,6 +252,8 @@ ou des objets, jamais les deux (ADR 0013).
 
 L'effacement d'un compte parcourt tout le journal d'événements : sa durée croît avec la taille
 du journal. L'identifiant d'un joueur effacé reste dans le journal, sous une forme
-pseudonymisée : plus aucune table ne le relie à une personne (ADR 0008). Les autres limites
-connues, dont le traitement des messages abandonnés, sont recensées dans le registre de la
-dette technique.
+pseudonymisée : plus aucune table ne le relie à une personne (ADR 0008).
+
+Le service Village extrait n'est pas prêt pour la production : ses migrations, la pagination
+de son flux publié et la distribution de sa boîte d'envoi restent à traiter. Ces limites, et
+les autres limites connues, sont recensées dans le registre de la dette technique.

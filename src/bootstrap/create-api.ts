@@ -141,6 +141,8 @@ export function createApi({
   // 4. Toute erreur non prévue produit une réponse JSON uniforme,
   //    sans divulguer de détail technique au client.
   app.onError((error, c) => {
+    // DETTE TECHNIQUE DT-018 (docs/qualite/dette-technique.md) : l'erreur est écrite en entier ;
+    // celle de Drizzle contient la requête et ses paramètres, données personnelles comprises.
     console.error(error)
     return c.json({ error: { code: 'INTERNAL', message: 'Erreur interne' } }, 500)
   })
@@ -169,6 +171,8 @@ export function createApi({
           return result
         },
         // Durée de conservation des données de la Taverne.
+        // DETTE TECHNIQUE DT-017 (docs/qualite/dette-technique.md) : aucune tâche ne supprime
+        // les sessions expirées, dont l'adresse IP et le navigateur restent conservés.
         tavern: tavern.dailyTask,
         // Relais du flux publié par le Village extrait, s'il y en a un.
         ...(remoteRealm ? { realm: remoteRealm.dailyTask } : {}),

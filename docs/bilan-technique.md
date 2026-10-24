@@ -1,89 +1,133 @@
-# Bilan technique
+# Bilan technique de Royaumes
 
-Ce bilan présente l'état technique de Royaumes au rendu de l'évaluation, qui a ajouté le module
-Forge, et le compare à l'étiquette `td11-fin`. Les indicateurs ont été mesurés le 2026-10-24,
-sur le dépôt à chacune des deux étapes.
+- Date : 2026-10-24
+- Version examinée : étiquette `td11-fin`, mise à jour au rendu de l'évaluation (module Forge)
+- Auteur : Quentin STEMPFER
 
-## Décisions d'architecture
+Ce bilan dresse l'état technique du projet au terme de son développement, à partir de ses
+décisions d'architecture, de ses indicateurs de qualité, de sa dette technique et de ses
+revues. Il s'adresse à la personne qui reprendrait le projet. Chaque tableau présente l'état à
+l'étiquette `td11-fin`, puis au rendu de l'évaluation, qui a ajouté le module Forge.
 
-| N° | Décision | Statut | Apport |
+## 1. Le système livré
+
+| Élément | `td11-fin` | Rendu |
+| --- | --- | --- |
+| Modules métier | 6 | 7 (ajout de `forge`) |
+| Briques de la plateforme | 9 | 9 |
+| Services extraits | 1 (Village, non déployé) | 1 |
+| Lignes de code, hors tests (`src`, `app`) | 8 253 | 9 705 |
+| Fichiers de test, nombre de tests | 33, 232 | 37, 289 |
+| Commits | 75 | 100 |
+| Hébergement | Vercel (Francfort), base Neon (Francfort) | Inchangé |
+
+| Module | Stockage | Lignes, hors tests (`td11-fin`) | Lignes, hors tests (rendu) |
 | --- | --- | --- | --- |
-| [0001](adr/0001-monolithe-modulaire.md) | Monolithe modulaire plutôt que microservices | Accepté | Modules isolés par leurs entrées publiques, contrôlés par dependency-cruiser |
-| [0002](adr/0002-event-sourcing-village.md) | Event Sourcing pour le Village | Accepté | Historique complet du village, concurrence optimiste |
-| [0003](adr/0003-server-sent-events.md) | Server-Sent Events, alimentés par le journal, pour le temps réel | Accepté | Un seul mécanisme de diffusion pour tous les modules |
-| [0004](adr/0004-manches-simultanees.md) | Manches simultanées et échéances paresseuses pour le Donjon | Accepté | Échéances sans tâche de fond |
-| [0005](adr/0005-intelligence-artificielle.md) | Intelligence artificielle déterministe, sans tâche de fond | Accepté | Compagnons reproductibles et testables |
-| [0006](adr/0006-cqrs-projections.md) | CQRS : modèles de lecture tenus par des projections rattrapées à la lecture | Accepté | Lectures rapides, tables reconstructibles |
-| [0007](adr/0007-saga-boite-envoi.md) | Saga orchestrée et boîte d'envoi transactionnelle pour les opérations entre modules | Accepté | Opérations entre modules sans perte ni double effet |
-| [0008](adr/0008-donnees-personnelles.md) | Stockage classique pour la Taverne, et réécriture ciblée du journal pour l'effacement | Accepté | Export et effacement des données personnelles |
-| [0010](adr/0010-forge-stockage.md) | La forge, bâtiment du Village, et la capacité des ateliers tenue par une projection | Accepté | Capacité lue dans le langage publié du Village, sans le modifier |
-| [0011](adr/0011-forge-commandes.md) | Journal d'événements pour les commandes de la Forge, un flux par atelier | Accepté | Capacité garantie par la concurrence optimiste ; état « forgé » déduit à la lecture |
-| [0012](adr/0012-forge-communication.md) | Paiement des commandes de la Forge par une saga orchestrée avec le Village | Accepté | Paiement sans appel direct, identique avec un Village extrait |
-| [0013](adr/0013-forge-marche.md) | Échange des objets de la Forge au Marché, la Forge participant à la saga d'échange | Accepté | Objets échangeables sans modifier les étapes de la saga du Marché |
-| [0014](adr/0014-forge-compensation-temps-reel.md) | Annulation compensée, expiration du paiement et canal temps réel de l'atelier | Accepté | Étape compensable, atelier jamais bloqué, écrans à jour sans rechargement |
+| `realm` | Event Sourcing | 1 093 | 1 097 |
+| `dungeon` | Event Sourcing, projection des expéditions ouvertes | 2 064 | 2 064 |
+| `market` | Event Sourcing, projection des offres, saga | 1 271 | 1 308 |
+| `ranking` | Projection du journal | 459 | 459 |
+| `tavern` | Tables ordinaires | 678 | 678 |
+| `system` | Aucun | 73 | 73 |
+| `forge` | Event Sourcing, projection de la capacité des ateliers, saga | — | 1 368 |
+| Service `village` | Racine de composition du service extrait | 77 | 77 |
 
-Le numéro 0009 est réservé à une décision du TD11, qui reste à consigner.
+Mesures : la boucle de la partie 2 du TD11 (`git ls-files … | grep -v '\.test\.ts$' | xargs cat | wc -l`),
+appliquée à chacune des deux étapes. Les modules existants n'ont presque pas changé pendant
+l'évaluation : 4 lignes pour le Village (le bâtiment forge), 37 pour le Marché (l'échange
+d'objets).
 
-## Qualité
+## 2. Les décisions d'architecture
 
-| Indicateur | `td11-fin` | Rendu | Évolution |
+| ADR | Décision | Mise à l'épreuve | Bilan |
 | --- | --- | --- | --- |
-| Fichiers de test | 33 | 37 | +4 |
-| Tests | 232 | 289 | +57 |
-| Tests supprimés ou désactivés | — | 0 | Aucun |
-| Couverture des instructions | 73,41 % | 73,05 % | −0,36 point |
-| Couverture des branches | 64,20 % | 64,04 % | −0,16 point |
-| Couverture des fonctions | 70,05 % | 68,78 % | −1,27 point |
-| Couverture des lignes | 75,00 % | 74,50 % | −0,50 point |
-| Règles de dependency-cruiser | 8 | 8 | Inchangées |
-| Fonctions d'aptitude | 2 | 2 | Inchangées |
-| Violations des règles d'architecture | 0 | 0 | — |
-| Fichiers analysés par dependency-cruiser | 143 | 161 | +18 |
-| Dépendances analysées | 454 | 534 | +80 |
+| 0001 | Monolithe modulaire | Extraction du Village (TD11) ; ajout d'un module complet à l'évaluation | A tenu : l'extraction n'a modifié ni le domaine du Village ni ses consommateurs, et la Forge s'est ajoutée par les seules entrées publiques, sans modifier les règles d'architecture |
+| 0002 | Event Sourcing pour le Village | Projections du Classement (TD8) et de la Forge (évaluation), relais du service extrait | A tenu : chaque nouveau besoin s'est servi de l'historique existant, sans migration de données |
+| 0003 | Server-Sent Events alimentés par le journal | Canaux discrets, globaux et à source propre ; canal de la Forge | A tenu, au prix d'une charge qui croît avec le nombre de flux ouverts (deux par joueur sur l'écran du Marché) |
+| 0004 | Manches simultanées et échéances paresseuses | Échéances de fabrication et de paiement de la Forge | A tenu : le même principe a servi sans tâche de fond |
+| 0005 | Intelligence artificielle déterministe | Script de simulation des expéditions | A tenu : comportements reproductibles et testés ; l'équilibre à quatre joueurs reste à revoir |
+| 0006 | CQRS et projections rattrapées à la lecture | Mesure de performance du TD11 ; projection de la Forge | A tenu, après une optimisation mesurée (rattrapage évité lorsque la projection est à jour) |
+| 0007 | Saga orchestrée et boîte d'envoi | Panne partielle du TD11 ; sagas de paiement, de compensation et d'échange d'objets de la Forge | A tenu : la Forge a orchestré sa saga et participé à celle du Marché sans nouveau code dans la plateforme |
+| 0008 | Taverne sans Event Sourcing, réécriture ciblée du journal | Revue de conformité (TD10) ; ajout de la Forge | A tenu : la Forge, sans nom ni texte libre dans ses événements, n'a rien à réécrire |
+| 0009 | Extraction du Village, préparée mais non déployée | Tests de contrat, et tests de la Forge avec un Village extrait | A tenu : les deux configurations passent les mêmes tests ; trois dettes restent à rembourser avant un déploiement |
+| 0010 | La forge, bâtiment du Village, et la capacité tenue par une projection | Tests de la projection ; Village extrait | A tenu : la capacité est lue dans le langage publié, sans modifier les contrats du Village |
+| 0011 | Journal d'événements pour les commandes de la Forge | Commandes simultanées ; mouvements d'objets du Marché | A tenu : la concurrence optimiste garantit la capacité ; le flux s'allonge avec les échanges (DT-011) |
+| 0012 | Paiement des commandes par une saga avec le Village | Village extrait ; réponses en double ou tardives | A tenu ; sa conséquence sur les paiements abandonnés a été corrigée par l'ADR 0014 |
+| 0013 | Échange des objets de la Forge au Marché | Six tests de l'API, dont un avec un Village extrait | A tenu : la saga du Marché n'a pas changé d'étapes ; une offre ne mêle pas ressources et objets |
+| 0014 | Annulation compensée, expiration du paiement, canal de l'atelier | Tests de conservation des ressources ; paiement tardif | A tenu : aucune ressource n'est créée ni perdue au-delà de la part prévue par les règles |
 
-Mesures : `pnpm test:coverage` (couverture de `src/`, hors tests), et
-`pnpm lint:archi` pour les règles d'architecture. Les règles et les fonctions d'aptitude n'ont
-pas été modifiées : la Forge les respecte telles qu'elles étaient à `td11-fin`.
+## 3. La qualité
 
-La couverture globale baisse légèrement, alors que le code de la Forge est bien couvert :
+| Caractéristique | Indicateur | Valeur | Appréciation |
+| --- | --- | --- | --- |
+| Adéquation fonctionnelle | Tests réussis ; couverture des domaines | 232 tests à `td11-fin`, 289 au rendu, tous réussis ; domaine de la Forge couvert à 100 % des lignes | Satisfaisante : chaque règle de la fiche de la Forge est vérifiée par un test du domaine |
+| Efficacité des performances | Débit et p99 des lectures ; respect du budget | `perf/apres.json` : de 678 (Marché) à 1 296 (Village) requêtes par seconde, p99 de 27 à 40 ms, aucune erreur ; budget : p99 < 500 ms | Satisfaisante, avec une large marge. La Forge ne figure pas encore dans les scénarios du test de charge |
+| Fiabilité | Tests de concurrence, de reprise et d'idempotence ; messages abandonnés | Acceptations et commandes simultanées, messages remis deux fois, paiements tardifs testés ; messages abandonnés signalés et relancés par `scripts/dead-letters.ts` | Satisfaisante ; un test du temps réel est instable sous charge (attente fixe de 50 ms) |
+| Sécurité | Exigences des revues de sécurité | 52 exigences, dont 51 conformes et 1 en risque accepté (S9) | Satisfaisante pour le jeu ; voir la section 5 |
+| Maintenabilité | Règles d'architecture ; fonctions d'aptitude ; couverture | 8 règles et 2 fonctions d'aptitude, aucune violation ; couverture des lignes : 75,00 % à `td11-fin`, 74,50 % au rendu | Bonne pour le serveur. L'interface n'est vérifiée par aucun test automatique : c'est elle qui fait baisser la couverture au rendu |
+| Flexibilité | Extraction d'un module ; changement de base entre local et production | Village exécutable dans un service ; PGlite en local et en test, Neon en production | Démontrée, sans déploiement du service |
 
-| Partie de la Forge | Couverture des lignes |
+Mesures : `pnpm test:coverage` (couverture de `src/`, hors tests), `pnpm lint:archi`, et les
+résultats du test de charge du TD11 (`perf/avant.json`, `perf/apres.json`).
+
+## 4. La dette technique
+
+| Indicateur | Valeur |
 | --- | --- |
-| Domaine (`workshop.ts`, `saga.ts`, `view.ts`, `recipes.ts`) | 100 % |
-| Application (`forge-service.ts`) | 95,9 % |
-| Infrastructure (dépôt, projection, lecture de la capacité) | 94,1 % |
-| Écran (`ui.tsx`) | 0 % |
+| Entrées consignées | 18 |
+| Entrées remboursées, dont à l'échéance prévue | 11, toutes à l'échéance prévue (DT-009, sans échéance fixée, remboursée dans l'incrément qui l'a suivie) |
+| Entrées ouvertes | 7 |
 
-La baisse vient des écrans : comme ceux des autres modules, l'écran de la Forge, et les ajouts
-à l'écran du Marché, ne sont couverts par aucun test automatique. Ils ont été vérifiés à la main
-dans le navigateur.
+Analyse : les sept premières entrées ont toutes été remboursées au TD prévu, et les quatre
+dettes de la Forge l'ont été dans l'incrément suivant celui qui les avait créées. Les sept
+entrées ouvertes se répartissent en trois groupes :
 
-## Dette technique
+- **DT-010 et DT-011** (Forge) : pagination de l'historique et instantané de l'atelier, dont le
+  coût croît avec l'activité d'un joueur, acceptable pour le volume du jeu ;
+- **DT-014 à DT-016** (service Village) : elles ne concernent que le service extrait, qui n'est
+  pas en production, et seraient à rembourser avant son déploiement ;
+- **DT-017 et DT-018** (RGPD) : les deux actions décidées par la revue de conformité du TD10,
+  restées sans suite. Elles n'avaient pas été reportées au registre ; elles le sont au moment
+  de ce bilan. C'est la seule dette découverte en relisant les revues, et non consignée à sa
+  création.
 
-Le [registre de la dette](qualite/dette-technique.md) comptait 7 entrées à `td11-fin`, toutes
-remboursées. L'évaluation en a ajouté 6 :
+## 5. Les revues
 
-| N° | Raccourci | Statut au rendu |
-| --- | --- | --- |
-| DT-008 | Aucune annulation d'une commande payée | Remboursée : annulation compensée (ADR 0014) |
-| DT-009 | Paiement en attente compté comme actif sans limite de durée | Remboursée : délai de paiement (ADR 0014) |
-| DT-010 | Historique complet des commandes dans la vue de l'atelier | Ouverte |
-| DT-011 | Flux de l'atelier relu en entier à chaque requête | Ouverte |
-| DT-012 | Écran de la Forge sans temps réel | Remboursée : canal de l'atelier (ADR 0014) |
-| DT-013 | Inventaire de l'écran du Marché sans temps réel | Remboursée : `useInventory` (ADR 0014) |
+| Revue | Exigences | Conformes | Non conformes ou en risque accepté | Actions ouvertes |
+| --- | --- | --- | --- | --- |
+| Sécurité de l'authentification | 16 | 15 | 1 en risque accepté (S9 : l'inscription révèle qu'une adresse est déjà utilisée) | Aucune : S3 est devenue DT-004, remboursée au TD11 |
+| Sécurité du Donjon | 14 | 14 | 0 | Aucune |
+| Sécurité du Marché | 10 | 10 | 0 | Aucune : DT-007, remboursée au TD11 |
+| Sécurité de la Forge | 12 | 12 | 0 | Aucune |
+| Conformité au RGPD | 10 | 7 | 2 non conformes (R8, R9), 1 en risque accepté (R10) | R8 et R9, consignées en DT-017 et DT-018 |
 
-Les deux dettes ouvertes croissent avec l'activité d'un joueur : le nombre de ses commandes pour
-DT-010, et le nombre de ses commandes et de ses échanges au Marché pour DT-011. Elles restent
-acceptables pour le volume du projet ; un instantané de l'atelier et une pagination de
-l'historique les rembourseraient.
+Chaque action ouverte figure désormais au registre de la dette.
 
-## Risques
+## 6. Risques et recommandations
 
-| Risque | Conséquence | Mesure ou piste |
-| --- | --- | --- |
-| Charge des flux temps réel | Chaque flux interroge le journal deux fois par seconde, et l'écran du Marché en ouvre maintenant deux | Compromis de l'ADR 0003, à réexaminer si le nombre de joueurs connectés augmente |
-| Délai de paiement plus court que les relances de la boîte d'envoi | Un paiement très retardé est restitué en entier, et le joueur doit recommander | Aucune perte de ressources ; délai réglable dans `workshop.ts` (ADR 0014) |
-| Confiance accordée aux messages `forge.*` | Les gestionnaires acceptent l'identifiant de joueur du message | Sûr tant que seul le serveur enregistre des messages ; une extraction de la Forge demanderait d'authentifier les messages entre services |
-| Écrans non testés | Une régression de l'interface n'est détectée qu'à la main | Des tests de bout en bout, par exemple avec Playwright |
-| Test instable du temps réel (`src/platform/realtime/stream-api.test.ts`) | Échec occasionnel de `pnpm verify` lorsque la machine est chargée : le test attend 50 ms fixes avant d'enregistrer un événement | Attendre l'abonnement effectif du flux plutôt qu'un délai fixe |
-| Croissance du flux d'un atelier (DT-011) | Le coût de chaque requête de la Forge augmente avec l'historique du joueur | Instantané de l'atelier |
+| N° | Risque | Signe avant-coureur | Recommandation |
+| --- | --- | --- | --- |
+| 1 | Charge des flux temps réel (ADR 0003) : chaque flux interroge le journal deux fois par seconde, et l'écran du Marché en ouvre deux | Temps de réponse de la base en hausse avec le nombre de joueurs connectés ; dépassement du budget de `perf/budget.json` | Ajouter les flux au test de charge ; mutualiser l'interrogation du journal entre les flux d'une même instance |
+| 2 | Croissance du journal (ADR 0006 et 0008, DT-011) : reconstruction des projections, effacement d'un compte et relecture des ateliers s'allongent | Durée d'une reconstruction ou d'un effacement ; latence de `GET /api/forge` pour les joueurs les plus actifs | Instantanés des flux les plus longs ; reconstruction des projections hors consultation |
+| 3 | Interface sans test automatique | Une régression signalée par un joueur, et non par `pnpm verify` | Un test de bout en bout avec Playwright, sur les parcours à deux joueurs : échange au Marché, objet de la Forge |
+
+## 7. Conclusion
+
+Le projet peut être repris et évoluer sans régression côté serveur : les règles d'architecture
+et les fonctions d'aptitude, inchangées depuis `td11-fin`, ont suffi à guider l'ajout d'un module
+complet, et les 289 tests vérifient les règles métier, les sagas et les contrats du Village
+extrait. Deux conditions demeurent : rembourser les deux dettes RGPD (DT-017, DT-018) avant
+toute ouverture à un public plus large, et couvrir l'interface par des tests de bout en bout,
+qui ne sont aujourd'hui vérifiés qu'à la main.
+
+## Usage de l'IA générative
+
+Outil utilisé : Claude Code (Anthropic), dans l'éditeur.
+
+- **Code et tests** : je prenais les décisions d'architecture, et Claude Code générait des blocs
+  de code et des tests conformes à ces décisions.
+- **Documents** : aide à la rédaction au format Markdown des documents, dont ce bilan.
+
+Vérification : j'ai relu chaque modification avant de la commiter, exécuté `pnpm lint:fix`,
+`pnpm verify` et `pnpm build` à chaque étape, et testé chaque fonctionnalité dans le
+navigateur.

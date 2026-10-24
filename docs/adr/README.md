@@ -14,6 +14,7 @@ un nouvel ADR est rédigé et l'ancien prend le statut « remplacé ».
 | [0006](0006-cqrs-projections.md) | CQRS : modèles de lecture tenus par des projections rattrapées à la lecture | Accepté |
 | [0007](0007-saga-boite-envoi.md) | Saga orchestrée et boîte d'envoi transactionnelle pour les opérations entre modules | Accepté |
 | [0008](0008-donnees-personnelles.md) | Stockage classique pour la Taverne, et réécriture ciblée du journal pour l'effacement | Accepté |
+| [0009](0009-extraction-village.md) | Extraction du Village en service autonome, préparée mais non déployée | Accepté |
 | [0010](0010-forge-stockage.md) | La forge, bâtiment du Village, et la capacité des ateliers tenue par une projection | Accepté |
 | [0011](0011-forge-commandes.md) | Journal d'événements pour les commandes de la Forge, un flux par atelier | Accepté |
 | [0012](0012-forge-communication.md) | Paiement des commandes de la Forge par une saga orchestrée avec le Village | Accepté |

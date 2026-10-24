@@ -2,7 +2,7 @@
 
 - Auteur : Quentin STEMPFER
 - Module : `forge`
-- Adresse du déploiement : <à compléter>
+- Adresse du déploiement : https://realm.kantinus.fr
 - Fiche de cadrage : [fiche-cadrage.md](fiche-cadrage.md)
 
 ## Exigences minimales
@@ -18,7 +18,7 @@
 | E7 | `src/modules/forge/personal-data.ts` : export des commandes et des mouvements d'objets. Aucun nom ni texte libre dans les événements, donc rien à réécrire ; aucune table personnelle à vider | `forge-api.test.ts` : « inclut les commandes de l'atelier dans l'export des données du joueur » ; fonction d'aptitude « déclare les données personnelles de chaque module qui conserve des données » |
 | E8 | Correspondance des règles 1 à 9 et des tests : voir [ci-dessous](#correspondance-des-règles-et-des-tests) ; chaque route a au moins un test de l'API | `workshop.test.ts`, `village.test.ts`, `forge-service.test.ts`, `forge-api.test.ts`, `market-api.test.ts` |
 | E9 | `.dependency-cruiser.cjs` et `src/bootstrap/architecture.test.ts` inchangés depuis `td11-fin` | `pnpm lint:archi` : aucune violation (161 fichiers, 534 dépendances) ; les deux fonctions d'aptitude passent |
-| E10 | Migration `drizzle/0013_forge.sql`, appliquée au déploiement par `pnpm vercel-build` | <à compléter après la vérification en production> |
+| E10 | Migration `drizzle/0013_forge.sql`, appliquée au déploiement par `pnpm vercel-build` | Vérifié en production le 2026-10-24 sur https://realm.kantinus.fr, à deux comptes : construction de la forge, commande, annulation et échange d'une hache au Marché ; Village, Donjon, Marché et Taverne fonctionnels ; export contenant la section `forge`, puis suppression du compte de test |
 
 ### Correspondance des règles et des tests
 
@@ -80,10 +80,9 @@ Le détail, dont la couverture de chaque partie de la Forge, figure dans le
 
 Outil utilisé : Claude Code (Anthropic), dans l'éditeur.
 
-- **Code** : je prenais les décisions d'architecture, et Claude Code générait des blocs
-  de code à intégrer dans les fichiers.
-- **Documents** : aide à la rédaction au format Markdown des documents.
-
+- **Code et tests** : je prenais les décisions d'architecture, et Claude Code générait des blocs
+  de code et des tests conformes à ces décisions.
+- **Documents** : aide à la rédaction au format Markdown des documents, dont ce bilan.
 Vérification : j'ai relu chaque modification avant de la commiter, exécuté `pnpm lint:fix`,
 `pnpm verify` et `pnpm build` à chaque étape, et testé chaque fonctionnalité dans le
 navigateur, à deux comptes pour les échanges et le temps réel. J'ai refusé et/ou corrigé quand l'IA prenait 
