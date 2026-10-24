@@ -240,15 +240,19 @@ describe('Forge - délai de paiement', () => {
 })
 
 describe('Forge - conservation des ressources', () => {
-  it('ne prélève que le coût des commandes payées, forgées ou en fabrication', () => {
-    // Trois commandes dans une forge de niveau 3 : une forgée, une en fabrication, une refusée.
+  it('ne garde que le coût des objets payés, et la part non restituée des annulations', () => {
+    // Quatre commandes dans une forge de niveau 4 : une forgée, une en fabrication,
+    // une refusée et une annulée.
     const steps: [WorkshopCommand, number][] = [
-      [order('axe', 'axe', 3), T0],
-      [order('crown', 'crown', 3), T0],
-      [order('sword', 'sword', 3), T0],
+      [order('axe', 'axe', 4), T0],
+      [order('crown', 'crown', 4), T0],
+      [order('sword', 'sword', 4), T0],
+      [order('pickaxe', 'pickaxe', 4), T0],
       [paid('axe'), T0],
       [paid('crown'), T0],
       [refused('sword', { gold: 20 }), T0],
+      [paid('pickaxe'), T0],
+      [{ type: 'CancelOrder', orderId: 'pickaxe' }, T0 + minutes(1)],
     ]
     let state = initialState
     const requests: SagaRequest[] = []
@@ -258,20 +262,23 @@ describe('Forge - conservation des ressources', () => {
       requests.push(...result.requests)
     }
 
-    // Le Village n'exécute que les prélèvements dont le paiement a été accepté.
+    // Le Village n'exécute que les prélèvements dont le paiement a été accepté, et tous les
+    // versements : le solde est le total prélevé moins le total restitué.
     const refusedIds = new Set(['forge:alice:sword:pay'])
-    const withdrawn: Record<string, number> = {}
+    const balance: Record<string, number> = {}
     for (const request of requests) {
       if (refusedIds.has(request.transferId)) continue
+      const sign = request.kind === 'withdraw' ? 1 : -1
       for (const [resource, amount] of Object.entries(request.resources)) {
-        withdrawn[resource] = (withdrawn[resource] ?? 0) + (amount ?? 0)
+        balance[resource] = (balance[resource] ?? 0) + sign * (amount ?? 0)
       }
     }
 
-    // Hache (60 bois, 20 pierres) et couronne (50 pierres, 100 or), rien pour l'épée refusée.
-    expect(withdrawn).toEqual({ wood: 60, stone: 70, gold: 100 })
-    const view = toView(state, 3, T0 + minutes(5))
-    expect(view.inventory).toMatchObject({ axe: 1, crown: 0, sword: 0 })
+    // Hache (60 bois, 20 pierres) et couronne (50 pierres, 100 or), rien pour l'épée refusée,
+    // et la moitié non restituée de la pioche annulée (20 bois, 30 pierres).
+    expect(balance).toEqual({ wood: 80, stone: 100, gold: 100 })
+    const view = toView(state, 4, T0 + minutes(5))
+    expect(view.inventory).toMatchObject({ axe: 1, crown: 0, sword: 0, pickaxe: 0 })
     expect(view.busy).toBe(1)
   })
 })
